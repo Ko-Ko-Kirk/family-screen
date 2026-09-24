@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { createHash, randomBytes } from 'node:crypto';
-import { createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync, unlinkSync } from 'node:fs';
-import { join, resolve, relative, dirname, extname, basename } from 'node:path';
+import { chmodSync, createReadStream, existsSync, mkdirSync, readFileSync, realpathSync, readdirSync, renameSync, statSync, writeFileSync, unlinkSync } from 'node:fs';
+import { join, resolve, relative, dirname, extname, basename, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { S3Client, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
@@ -37,6 +37,7 @@ function loadManifest() {
 function saveManifest(manifest) {
   mkdirSync(privateDir, { recursive: true });
   writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n', { mode: 0o600 });
+  chmodSync(manifestPath, 0o600);
 }
 function sha256File(path) {
   return new Promise((done, reject) => {
@@ -213,13 +214,27 @@ function userAdd() {
     ON CONFLICT(username) DO UPDATE SET password_salt = excluded.password_salt, password_hash = excluded.password_hash,
       failed_count = 0, locked_until = 0;
     DELETE FROM sessions WHERE user_id = (SELECT id FROM users WHERE username = ${escapeSql(username)});\n`;
-  d1Sql(sql, hasFlag('local'));
+  let temporaryPath = null;
   if (credentialPath) {
     mkdirSync(dirname(credentialPath), { recursive: true });
-    writeFileSync(credentialPath, `帳號：${username}\n密碼：${password}\n`, { mode: 0o600 });
-    console.log(`帳號已建立，登入資訊已寫入 ${relative(root, credentialPath)}（僅限本機，權限 0600）。`);
-  } else {
-    console.log(`帳號：${username}\n一次性顯示密碼：${password}\n請現在存入你的密碼管理器；D1 只保留加鹽雜湊。`);
+    const privateRoot = realpathSync(privateDir);
+    const parent = realpathSync(dirname(credentialPath));
+    if (parent !== privateRoot && !parent.startsWith(`${privateRoot}${sep}`)) throw new Error('帳密檔案必須留在 private/ 內');
+    temporaryPath = join(parent, `.family-screen-login-${randomBytes(8).toString('hex')}.tmp`);
+    writeFileSync(temporaryPath, `帳號：${username}\n密碼：${password}\n`, { mode: 0o600, flag: 'wx' });
+  }
+  try {
+    d1Sql(sql, hasFlag('local'));
+    if (temporaryPath && credentialPath) {
+      renameSync(temporaryPath, credentialPath);
+      temporaryPath = null;
+      chmodSync(credentialPath, 0o600);
+      console.log(`帳號已建立，登入資訊已寫入 ${relative(root, credentialPath)}（僅限本機，權限 0600）。`);
+    } else {
+      console.log(`帳號：${username}\n一次性顯示密碼：${password}\n請現在存入你的密碼管理器；D1 只保留加鹽雜湊。`);
+    }
+  } finally {
+    if (temporaryPath && existsSync(temporaryPath)) unlinkSync(temporaryPath);
   }
 }
 

@@ -9,6 +9,26 @@ type VideoRow = {
 
 const app = new Hono<AppEnv>();
 
+const contentSecurityPolicy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self'; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+
+app.use('*', async (context, next) => {
+  const method = context.req.method;
+  if (method !== 'GET' && method !== 'HEAD') {
+    const origin = context.req.header('Origin');
+    if (origin && origin !== new URL(context.req.url).origin) {
+      return context.json({ error: '請從本站操作' }, 403);
+    }
+  }
+  await next();
+  context.header('Cache-Control', 'private, no-store');
+  context.header('Content-Security-Policy', contentSecurityPolicy);
+  context.header('X-Content-Type-Options', 'nosniff');
+  context.header('X-Frame-Options', 'DENY');
+  context.header('Referrer-Policy', 'no-referrer');
+  context.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  context.header('X-Robots-Tag', 'noindex');
+});
+
 const authorize: MiddlewareHandler<AppEnv> = async (context, next) => {
   if (context.req.path === '/api/login') return next();
   const viewer = await getViewer(context);
@@ -21,22 +41,35 @@ app.use('/api/*', authorize);
 app.use('/media/*', authorize);
 app.use('/thumbnails/*', authorize);
 
-app.use('*', async (context, next) => {
-  const method = context.req.method;
-  if (method !== 'GET' && method !== 'HEAD') {
-    const origin = context.req.header('Origin');
-    if (origin && origin !== new URL(context.req.url).origin) {
-      return context.json({ error: '請從本站操作' }, 403);
+async function limitedJson(context: Parameters<MiddlewareHandler<AppEnv>>[0], limit: number): Promise<{ body: unknown } | { error: 'too_large' | 'invalid' }> {
+  const contentLength = Number(context.req.header('Content-Length'));
+  if (Number.isFinite(contentLength) && contentLength > limit) return { error: 'too_large' };
+  const stream = context.req.raw.body;
+  if (!stream) return { error: 'invalid' };
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > limit) {
+      await reader.cancel();
+      return { error: 'too_large' };
     }
+    chunks.push(value);
   }
-  await next();
-  context.header('Cache-Control', 'private, no-store');
-  context.header('X-Content-Type-Options', 'nosniff');
-});
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  try { return { body: JSON.parse(new TextDecoder().decode(bytes)) as unknown }; }
+  catch { return { error: 'invalid' }; }
+}
 
 app.post('/api/login', async (context) => {
-  if (Number(context.req.header('Content-Length') || 0) > 4096) return context.json({ error: '請求過大' }, 413);
-  const body: unknown = await context.req.json().catch(() => null);
+  const parsed = await limitedJson(context, 4096);
+  if ('error' in parsed && parsed.error === 'too_large') return context.json({ error: '請求過大' }, 413);
+  const body: unknown = 'body' in parsed ? parsed.body : null;
   const username = typeof body === 'object' && body !== null && 'username' in body && typeof body.username === 'string'
     ? body.username.trim().toLowerCase() : '';
   const password = typeof body === 'object' && body !== null && 'password' in body && typeof body.password === 'string'
@@ -98,12 +131,13 @@ app.get('/api/videos/:id/chapters', async (context) => {
 });
 
 app.put('/api/progress/:id', async (context) => {
-  if (Number(context.req.header('Content-Length') || 0) > 1024) return context.json({ error: '請求過大' }, 413);
+  const parsed = await limitedJson(context, 1024);
+  if ('error' in parsed && parsed.error === 'too_large') return context.json({ error: '請求過大' }, 413);
   const id = context.req.param('id');
   const video = await context.env.DB.prepare('SELECT duration_seconds FROM videos WHERE id = ? AND published = 1')
     .bind(id).first<{ duration_seconds: number }>();
   if (!video) return context.json({ error: '找不到影片' }, 404);
-  const body: unknown = await context.req.json().catch(() => null);
+  const body: unknown = 'body' in parsed ? parsed.body : null;
   const position = typeof body === 'object' && body !== null && 'position_seconds' in body
     ? body.position_seconds : null;
   if (typeof position !== 'number' || !Number.isFinite(position) || position < 0 || position > video.duration_seconds + 2) {

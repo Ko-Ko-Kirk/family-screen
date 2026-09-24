@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { S3Client, HeadObjectCommand } from '@aws-sdk/client-s3';
 
@@ -49,7 +49,7 @@ let status;
 try {
   if (Number(process.versions.node.split('.')[0]) < 22) throw new Error('需要 Node.js 22 以上');
   if (!existsSync(credentialPath)) throw new Error('缺少 private/r2-upload.json');
-  if ((statSync(credentialPath).mode & 0o077) !== 0) throw new Error('R2 金鑰檔權限必須是 0600');
+  if (process.platform !== 'win32' && (statSync(credentialPath).mode & 0o077) !== 0) throw new Error('R2 金鑰檔權限必須是 0600');
   const credentials = readJson(credentialPath);
   for (const field of ['accountId', 'bucket', 'accessKeyId', 'secretAccessKey']) {
     if (typeof credentials[field] !== 'string' || !credentials[field]) throw new Error(`R2 金鑰檔缺少 ${field}`);

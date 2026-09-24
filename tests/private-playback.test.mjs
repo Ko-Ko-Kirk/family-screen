@@ -72,8 +72,22 @@ test('only an authenticated viewer can browse, seek, and resume a private video'
     child.stderr.on('data', (data) => { output += data.toString(); });
     await waitForServer(base, child).catch((error) => { throw new Error(`${error.message}\n${output.slice(-700)}`); });
 
-    assert.equal((await fetch(`${base}/api/catalog`)).status, 401);
+    const shell = await fetch(base);
+    assert.match(shell.headers.get('content-security-policy') || '', /frame-ancestors 'none'/);
+    assert.equal(shell.headers.get('x-frame-options'), 'DENY');
+    const privateCatalog = await fetch(`${base}/api/catalog`);
+    assert.equal(privateCatalog.status, 401);
+    assert.equal(privateCatalog.headers.get('cache-control'), 'private, no-store');
+    assert.equal(privateCatalog.headers.get('x-content-type-options'), 'nosniff');
     assert.equal((await fetch(`${base}/media/${videoId}.mp4`, { headers: { Range: 'bytes=0-1' } })).status, 401);
+    const oversizedLogin = await fetch(`${base}/api/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, duplex: 'half',
+      body: new ReadableStream({ start(controller) {
+        controller.enqueue(new TextEncoder().encode(JSON.stringify({ username: account, password: 'x'.repeat(5000) })));
+        controller.close();
+      } }),
+    });
+    assert.equal(oversizedLogin.status, 413);
     const wrong = await fetch(`${base}/api/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: account, password: 'wrong' }) });
     assert.equal(wrong.status, 401);
     const login = await fetch(`${base}/api/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: account, password }) });
@@ -81,6 +95,14 @@ test('only an authenticated viewer can browse, seek, and resume a private video'
     const cookie = login.headers.get('set-cookie')?.split(';')[0];
     assert.ok(cookie?.startsWith('family_screen_session='));
     const auth = { Cookie: cookie };
+    const oversizedProgress = await fetch(`${base}/api/progress/${videoId}`, {
+      method: 'PUT', headers: { ...auth, 'Content-Type': 'application/json' }, duplex: 'half',
+      body: new ReadableStream({ start(controller) {
+        controller.enqueue(new TextEncoder().encode(JSON.stringify({ position_seconds: 0.5, padding: 'x'.repeat(2000) })));
+        controller.close();
+      } }),
+    });
+    assert.equal(oversizedProgress.status, 413);
     const catalog = await fetch(`${base}/api/catalog`, { headers: auth });
     assert.equal(catalog.status, 200);
     assert.equal((await catalog.json()).videos.length, 1);
