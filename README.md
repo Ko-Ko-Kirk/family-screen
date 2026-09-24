@@ -77,3 +77,14 @@ For example, a 92 GB library in R2 Standard would cost roughly US$1.23/month whe
 - `tests/`: meaningful local access and media behavior checks.
 
 The code is under MIT. Actual family media, thumbnails, account details, and viewing history are not part of the software distribution.
+
+## Install the setup skill
+
+After cloning the repository, copy its setup skill into your Codex skills directory:
+
+```bash
+mkdir -p ~/.codex/skills
+cp -R skills/family-screen-setup ~/.codex/skills/
+```
+
+In a new Codex task, ask to use `$family-screen-setup` with this repository. The skill guides local verification, Cloudflare setup, video approval, a three-video trial, and privacy checks. Keep the household's `private/` directory and `wrangler.jsonc` outside Git.
