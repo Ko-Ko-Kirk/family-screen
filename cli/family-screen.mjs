@@ -256,17 +256,22 @@ async function uploadFile(client, bucket, key, path, contentType) {
   return '已上傳';
 }
 
-function uploadLocalFile(bucket, key, path) {
-  run('npx', ['wrangler', 'r2', 'object', 'put', `${bucket}/${key}`, '--file', path, '--local']);
-  return '已匯入本機 R2';
+function uploadWranglerFile(bucket, key, path, local, contentType) {
+  if (!local && statSync(path).size > 300 * 1024 * 1024) {
+    throw new Error(`Wrangler 單檔上傳限約 315 MB；請為較大的影片設定 R2 S3 憑證：${key}`);
+  }
+  run('npx', ['wrangler', 'r2', 'object', 'put', `${bucket}/${key}`, '--file', path,
+    '--content-type', contentType, local ? '--local' : '--remote']);
+  return local ? '已匯入本機 R2' : '已匯入遠端 R2';
 }
 
 async function importVideos() {
   const videos = selectedVideos();
   if (!videos.length) throw new Error('尚未確認任何影片');
   const local = hasFlag('local');
+  const useWrangler = local || hasFlag('wrangler');
   const config = JSON.parse(readFileSync(configPath, 'utf8'));
-  const { bucket, client } = local ? { bucket: config.r2_buckets[0].bucket_name, client: null } : r2Client();
+  const { bucket, client } = useWrangler ? { bucket: config.r2_buckets[0].bucket_name, client: null } : r2Client();
   const thumbnailDir = join(privateDir, 'thumbnails');
   const statements = [];
   for (const [index, video] of videos.entries()) {
@@ -278,8 +283,8 @@ async function importVideos() {
     const mediaKey = `videos/${video.id}.mp4`;
     const thumbnailKey = `thumbnails/${video.id}.jpg`;
     console.log(`[${index + 1}/${videos.length}] ${video.title}`);
-    console.log(`  影片 ${local ? uploadLocalFile(bucket, mediaKey, video.source_path) : await uploadFile(client, bucket, mediaKey, video.source_path, 'video/mp4')}`);
-    console.log(`  封面 ${local ? uploadLocalFile(bucket, thumbnailKey, thumbnail) : await uploadFile(client, bucket, thumbnailKey, thumbnail, 'image/jpeg')}`);
+    console.log(`  影片 ${useWrangler ? uploadWranglerFile(bucket, mediaKey, video.source_path, local, 'video/mp4') : await uploadFile(client, bucket, mediaKey, video.source_path, 'video/mp4')}`);
+    console.log(`  封面 ${useWrangler ? uploadWranglerFile(bucket, thumbnailKey, thumbnail, local, 'image/jpeg') : await uploadFile(client, bucket, thumbnailKey, thumbnail, 'image/jpeg')}`);
     statements.push(`INSERT INTO videos (id,title,collection,kind,period,duration_seconds,bytes,topics_json,media_key,thumbnail_key,sort_key,published)
       VALUES (${sqlValues([video.id, video.title, video.collection, video.kind, video.period, video.duration_seconds, video.bytes,
         JSON.stringify(video.topics), mediaKey, thumbnailKey, video.sort_key, 1])})
@@ -328,7 +333,8 @@ function help() {
   prepare [--limit 3]                   產生封面
   estimate [--limit 3]                  估算影片儲存費
   user-add --username family [--local]  產生高強度密碼並寫入 D1
-  import [--limit 3] [--local]          上傳並發布；遠端使用 S3 multipart
+  import [--limit 3] [--local]          上傳並發布；遠端預設使用 S3 multipart
+  import --limit 3 --wrangler          小檔試播：沿用 Wrangler 登入上傳
   verify --url URL [--video-id ID]      驗證匿名無法讀取影片`);
 }
 

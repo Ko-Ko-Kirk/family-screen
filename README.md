@@ -8,7 +8,7 @@ The app runs as one Cloudflare Worker with Static Assets, a private R2 bucket, a
 
 - Node.js 22 or newer, npm, and ffmpeg/ffprobe.
 - A Cloudflare account authenticated with Wrangler for deployment. Local development does not need account login.
-- For media upload: an R2 S3 API token scoped to the household's bucket. The uploader reads `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and `R2_BUCKET` from its environment.
+- For large or bulk media upload: an R2 S3 API token scoped to the household's bucket. The uploader reads `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and `R2_BUCKET` from its environment. Small trial uploads can use Wrangler's existing login.
 
 ## First local run
 
@@ -55,11 +55,11 @@ npx wrangler whoami
 npm run deploy
 npm run db:remote
 npm run cli -- user-add --username family
-npm run cli -- import --limit 3
+npm run cli -- import --limit 3 --wrangler
 npm run cli -- verify --url https://YOUR-WORKER.workers.dev --video-id YOUR-VIDEO-ID
 ```
 
-Wrangler can provision the D1 and R2 bindings in the ignored config on deployment. To upload large videos, set the four R2 S3 environment variables in your shell or private environment file. The uploader uses multipart upload, verifies object length and SHA-256 metadata, and skips matching objects on reruns. After the trial, run `npm run cli -- prepare` and `npm run cli -- import` for the full approved list.
+Wrangler can provision D1 in the ignored config. Enable R2 in the Cloudflare dashboard and create the private bucket named in `wrangler.jsonc` before deployment. Trial videos under 300 MiB can use `--wrangler` without an extra API token. To upload larger videos, set the four R2 S3 environment variables in your shell or private environment file. The S3 uploader uses multipart upload, verifies object length and SHA-256 metadata, and skips matching objects on reruns. After the trial, run `npm run cli -- prepare` and `npm run cli -- import` for the full approved list.
 
 The public shell has no catalog data. `/api`, `/media`, and `/thumbnails` check a D1 session cookie. An account is created from the CLI; the viewer UI has no signup or upload route. The Worker returns MP4 byte ranges directly from private R2. A 30-minute viewing session does not require video processing on the Worker.
 

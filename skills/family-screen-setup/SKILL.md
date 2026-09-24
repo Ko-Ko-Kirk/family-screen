@@ -25,10 +25,10 @@ Use the CLI in this repository for repeatable setup and content changes. The web
 ## Cloudflare deployment
 
 - Check `npx wrangler whoami`. If the account is not authenticated, use Wrangler's login flow; the account owner may need to complete it. Check the existing free quota and actual resource names before deploying.
-- `npm run deploy` uses the repository's Worker Static Assets, D1, and private R2 bindings. Wrangler may provision missing resources and write their IDs into the ignored `wrangler.jsonc`.
+- `npm run deploy` uses the repository's Worker Static Assets, D1, and private R2 bindings. Wrangler may provision D1 and write its ID into the ignored `wrangler.jsonc`. Enable R2 in the dashboard and create the configured private bucket before deployment.
 - Apply `npm run db:remote` before creating accounts or publishing media.
 - Run `npm run cli -- user-add --username <family-login>`. It generates a high-entropy password, writes only a salted digest into D1, shows the password once, and invalidates prior sessions if the account already existed. Let the user store it in a password manager.
-- Content upload uses R2 S3 credentials supplied by the account owner as environment variables `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and `R2_BUCKET`. Keep them out of command text and logs. Run `npm run cli -- import --limit 3` for the trial, then complete the approved catalog after playback succeeds.
+- For trial files under 300 MiB, run `npm run cli -- import --limit 3 --wrangler` using Wrangler's existing login. Larger or bulk uploads use R2 S3 credentials supplied by the account owner as environment variables `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and `R2_BUCKET`. Keep them out of command text and logs. Complete the approved catalog after playback succeeds.
 - Run `npm run cli -- verify --url <site-url> --video-id <published-id>` and test a signed-in desktop browser. Test the actual television's login, remote navigation, H.264/AAC playback, seek, autoplay, and resume before claiming TV support.
 
 ## Updating and troubleshooting
