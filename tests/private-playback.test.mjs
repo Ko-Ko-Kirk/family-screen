@@ -9,8 +9,9 @@ import { spawn, spawnSync } from 'node:child_process';
 
 const root = resolve(import.meta.dirname, '..');
 const wrangler = join(root, 'node_modules/wrangler/bin/wrangler.js');
+const testConfig = join(root, 'wrangler.example.jsonc');
 function run(params) {
-  const result = spawnSync(process.execPath, [wrangler, ...params], { cwd: root, encoding: 'utf8', timeout: 45_000 });
+  const result = spawnSync(process.execPath, [wrangler, ...params, '--config', testConfig], { cwd: root, encoding: 'utf8', timeout: 45_000 });
   assert.equal(result.status, 0, `${params[0]} failed: ${(result.stderr || result.stdout).slice(-700)}`);
 }
 function freePort() {
@@ -64,7 +65,7 @@ test('only an authenticated viewer can browse, seek, and resume a private video'
     run(['d1', 'execute', 'DB', '--local', '--persist-to', state, '--file', sqlFile]);
     run(['r2', 'object', 'put', `family-screen-example-media/videos/${videoId}.mp4`, '--file', sample, '--local', '--persist-to', state]);
     run(['r2', 'object', 'put', `family-screen-example-media/thumbnails/${videoId}.jpg`, '--file', thumbnail, '--local', '--persist-to', state]);
-    child = spawn(process.execPath, [wrangler, 'dev', '--ip', '127.0.0.1', '--port', String(port), '--persist-to', state, '--show-interactive-dev-session=false'],
+    child = spawn(process.execPath, [wrangler, 'dev', '--ip', '127.0.0.1', '--port', String(port), '--persist-to', state, '--show-interactive-dev-session=false', '--config', testConfig],
       { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '';
     child.stdout.on('data', (data) => { output += data.toString(); });

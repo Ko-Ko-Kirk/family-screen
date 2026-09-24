@@ -16,6 +16,7 @@
     "deploy": "npm run build && wrangler deploy",
     "setup": "node cli/family-screen.mjs init",
     "cli": "node cli/family-screen.mjs",
+    "upload:all": "node scripts/upload-all.mjs",
     "test": "npm run build && node --test tests/*.test.mjs"
   },
   "keywords": [],
