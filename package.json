@@ -1,0 +1,40 @@
+{
+  "name": "family-screen",
+  "version": "0.1.0",
+  "description": "A private, parent-curated video library for families",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc --noEmit && vite build",
+    "dev": "npm run build && wrangler dev",
+    "typecheck": "tsc --noEmit",
+    "cf:types": "wrangler types",
+    "db:local": "wrangler d1 migrations apply DB --local",
+    "db:remote": "wrangler d1 migrations apply DB --remote",
+    "deploy": "npm run build && wrangler deploy",
+    "setup": "node cli/family-screen.mjs init",
+    "cli": "node cli/family-screen.mjs",
+    "test": "npm run build && node --test tests/*.test.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1139.0",
+    "@aws-sdk/lib-storage": "^3.1139.0",
+    "hono": "^4.13.9",
+    "lucide-react": "^1.48.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.1",
+    "wrangler": "^4.138.0"
+  }
+}
