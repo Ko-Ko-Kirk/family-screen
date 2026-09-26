@@ -1,31 +1,33 @@
-# Family Screen｜自己挑影片給家人看
+# Family Screen | A private video library for your family
 
-我想把家裡已經有的影片整理好，讓小孩能隨選、續看，也讓長輩在電視或電腦上操作。這件事不需要再開一個公開影片頻道，也不需要為了少數幾位家人架一台轉檔伺服器。
+**English** · [繁體中文](README.zh-TW.md)
 
-Family Screen 是一套可以自己部署的家庭片庫：用接近 YouTube 的方式找影片、看章節、接著播放下一集，並記住每個帳號看到哪裡。程式碼可以開源；你的影片、封面、片單和帳密留在自己的 Cloudflare 帳戶與本機，不會放進這個 repo。
+I wanted to organize the videos my family already has so children could choose what to watch and pick up where they left off, while grandparents could use a TV or computer. That should not require a public video channel or a transcoding server for a handful of viewers.
 
-目前這版由一個 Cloudflare Worker 提供網頁與 API，D1 保存帳號、片單和觀看進度，私人 R2 bucket 保存 MP4 與封面。影片由 R2 按位元組範圍送給瀏覽器，不必另外轉成 HLS。電視能否順利播放，仍要用實際的電視或電視盒測試。
+Family Screen is a self-hosted family video library. Viewers can browse videos, jump to chapters, play the next episode, and resume from their own account's last position. The code can be public while your videos, thumbnails, catalog, and credentials stay in your own Cloudflare account and on your computer.
 
-網站目前只負責找片、播放和續看，沒有網頁後台可以上傳或管理影片。新增影片由持有者在自己的電腦上用 `$family-screen-setup` skill 協助執行本 repo 的 CLI：整理片單、產生封面、上傳到私人 R2，再更新 D1。
+One Cloudflare Worker serves the website and API. D1 stores accounts, the catalog, and watch progress; a private R2 bucket stores MP4 files and thumbnails. The Worker serves byte ranges from R2, so the app does not need an HLS transcoding server. Test playback on the actual TV or streaming device you plan to use.
 
-## 用 skill 匯入影片
+The website is for browsing, playback, and resuming. It does not have a video upload or admin interface. To add videos, use the included `$family-screen-setup` skill on the computer holding your files. It guides the local CLI through preparing the catalog and thumbnails, uploading to private R2, and publishing metadata to D1.
 
-在持有影片的電腦 clone 這份 repo，安裝 repo 內的 skill：
+## Import videos with the skill
+
+Clone this repository on the computer holding your videos, then install its skill:
 
 ```bash
 mkdir -p ~/.codex/skills
 cp -R skills/family-screen-setup ~/.codex/skills/
 ```
 
-接著在 Codex 開啟這份 repo，指定 `$family-screen-setup`。例如：
+Open the repository in Codex and invoke `$family-screen-setup`. For example:
 
-> `$family-screen-setup` 請把 `/absolute/path/to/videos` 加進我現有的 Family Screen。保留原本的片單與 Cloudflare 設定，先列出新增影片、容量和預估費用；依我選定的項目上傳，最後驗證登入保護與播放。
+> `$family-screen-setup` Add `/absolute/path/to/videos` to my existing Family Screen. Preserve the current catalog and Cloudflare configuration. Show me the new videos, storage estimate, and expected cost; upload the ones I select, then verify authenticated playback and anonymous access protection.
 
-第一次使用時，也可以請 skill 從部署開始處理。下面保留完整指令，方便知道 skill 實際會做什麼，或自行在終端機操作。增補既有片庫時要保留 `private/manifest.json`：`scan` 和 `from-catalog` 會依這次提供的來源重建本機片單，不能只掃新資料夾就直接覆蓋舊片單。
+For a new library, you can ask the skill to handle setup and deployment too. The commands below document what it does and can also be run manually. When extending an existing library, preserve `private/manifest.json`: `scan` and `from-catalog` rebuild the local manifest from the input you give them. Scanning only a new folder would leave old entries out of that manifest.
 
-## 先在本機跑起來
+## Run locally
 
-需要 Node.js 22 以上、npm、ffmpeg 和 ffprobe。Clone repo 後：
+You need Node.js 22 or newer, npm, ffmpeg, and ffprobe. After cloning:
 
 ```bash
 npm install
@@ -37,46 +39,46 @@ npm run cli -- user-add --username family --local --credentials-file private/loc
 npm run dev
 ```
 
-用 `private/local-login.txt` 裡的帳密登入 Wrangler 印出的本機網址。這個檔案只留在本機，權限設為 `0600`；`private/` 和 `wrangler.jsonc` 都已被 Git 忽略。D1 保存的是加鹽雜湊，不是明文密碼。CLI 會產生隨機密碼，請不要改成容易猜的家庭共用密碼。
+Use the credentials in `private/local-login.txt` at the local URL printed by Wrangler. Keep that file on your computer with mode `0600`. Git ignores both `private/` and `wrangler.jsonc`. D1 stores a salted password hash rather than a plaintext password. The CLI generates a random password; avoid replacing it with an easy-to-guess shared password.
 
-## 把自己的影片放進片單
+## Add your videos to the catalog
 
-有一般影片資料夾，就掃描 MP4：
+Scan a folder of MP4 files:
 
 ```bash
 npm run cli -- scan --dir /absolute/path/to/videos
 ```
 
-若已經整理好 JSON 片單，改用：
+If you already have a prepared JSON catalog, use:
 
 ```bash
 npm run cli -- from-catalog --input /absolute/path/to/catalog.json
 ```
 
-兩種方式都會建立 `private/manifest.json`。新影片預設不發布；先看過片名、來源和順序，再核准要放進家用片庫的項目：
+Either command creates `private/manifest.json`. New videos are unpublished by default. Review their titles, sources, and order, then approve the entries you want in the family library:
 
 ```bash
 npm run cli -- approve --ids ID1,ID2,ID3
 ```
 
-只有確定整份片單都要發布時，才執行 `--all`：
+Only use `--all` if you intend to publish every entry in the manifest:
 
 ```bash
 npm run cli -- approve --all
 ```
 
-接著估算容量，先產生三支試播影片的封面：
+Estimate storage and prepare thumbnails for three trial videos:
 
 ```bash
 npm run cli -- estimate
 npm run cli -- prepare --limit 3
 ```
 
-`scan` 只接受含 H.264 影像的 MP4；若有音訊，需為 AAC。這樣做是為了讓一般瀏覽器與電視比較容易直接播放；其他格式要先自行轉檔。`prepare` 會從影片產生封面，`estimate` 會列出 R2 儲存量與費用假設。
+`scan` accepts MP4 files with H.264 video and, when audio is present, AAC audio. Other formats need conversion first. These codecs help browsers and TVs play files directly. `prepare` generates thumbnails; `estimate` reports storage and its cost assumptions.
 
-## 部署到自己的 Cloudflare
+## Deploy to your Cloudflare account
 
-先在 Cloudflare 啟用 R2，建立與 `wrangler.jsonc` 中 `bucket_name` 相同的私人 bucket，並確認沒有開啟 R2 公開網址或公開網域。Wrangler 要登入你的 Cloudflare 帳戶。接著：
+Enable R2 in Cloudflare and create a private bucket matching `bucket_name` in `wrangler.jsonc`. Do not enable an R2 public development URL or custom domain for the bucket. Sign in to your Cloudflare account with Wrangler, then run:
 
 ```bash
 npx wrangler whoami
@@ -87,13 +89,13 @@ npm run cli -- import --limit 3 --wrangler
 npm run cli -- verify --url https://YOUR-WORKER.workers.dev --video-id YOUR-VIDEO-ID
 ```
 
-先試播三支小於 300 MiB 的影片，可以直接沿用 Wrangler 登入。登入後檢查片單、封面、拖曳進度、下一集與續看；也用未登入的視窗確認片單和影片要求會回 `401`。`verify` 只檢查匿名存取，電視遙控器與播放能力還是要在實機上驗證。
+For the first three trial files under 300 MiB each, the import can use your existing Wrangler login. Once signed in, check the catalog, thumbnails, seeking, next-video playback, and resume. In a signed-out window, confirm that catalog and video requests return `401`. The `verify` command checks anonymous access only; TV remote control and playback still need to be tested on the device itself.
 
-網頁本身是公開可載入的靜態殼；片單 API、封面與影片要有有效的 D1 登入 session 才能讀取。R2 bucket 不需要公開網址。這些限制由程式與儲存設定執行；`noindex` 只是避免搜尋引擎收錄，不能代替登入保護。
+The website's static shell is publicly loadable, but the catalog API, thumbnails, and videos require a valid D1 login session. The R2 bucket needs no public URL. Application and storage access controls provide this protection; `noindex` alone does not.
 
-## 三支試播沒問題後，匯入整批
+## Import the full library after the trial
 
-大檔和整批上傳使用 R2 的 S3 API。到 Cloudflare 建立**只限這個 bucket、Object Read & Write、短效期**的 User API token；把它的資料存成 Git 忽略的 `private/r2-upload.json`：
+Large files and bulk imports use R2's S3 API. In Cloudflare, create a short-lived User API token with **Object Read & Write access limited to this bucket**. Save its details in Git-ignored `private/r2-upload.json`:
 
 ```json
 {
@@ -104,7 +106,7 @@ npm run cli -- verify --url https://YOUR-WORKER.workers.dev --video-id YOUR-VIDE
 }
 ```
 
-在 macOS／Linux 上執行 `chmod 600 private/r2-upload.json`。先前的三支試播必須已經上傳，因為檢查指令會讀取片單第一支影片來驗證金鑰：
+On macOS or Linux, run `chmod 600 private/r2-upload.json`. The three trial videos must already be uploaded because the credential check reads the first catalog video:
 
 ```bash
 npm run upload:all -- --check
@@ -113,27 +115,27 @@ cat private/upload-status.json
 tail -f private/upload.log
 ```
 
-腳本會補齊封面、依序上傳已核准的影片，最後才把完整片單寫進 D1。中途中斷時，先看 `private/upload-status.json` 的錯誤；金鑰仍有效就重跑同一指令，已上傳且 SHA-256 相同的物件會略過。成功後腳本會刪除暫存金鑰。若金鑰過期，就建立新的限定 token 再跑。上傳期間請保持電腦喚醒、來源硬碟連線。
+The script completes thumbnails, uploads approved videos, and only then publishes the full catalog to D1. If interrupted, check `private/upload-status.json` for the error. While the token is valid, rerun the same command; objects with matching SHA-256 hashes are skipped. The script deletes its temporary token file after a successful run. If the token expires, create a new restricted token and rerun. Keep the computer awake and the source drive connected during upload.
 
-也可以直接設定 `R2_ACCOUNT_ID`、`R2_BUCKET`、`R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY` 四個環境變數，手動執行 `npm run cli -- prepare` 與 `npm run cli -- import`。不要把金鑰貼進 Git、指令列參數或 issue。
+Alternatively, set `R2_ACCOUNT_ID`, `R2_BUCKET`, `R2_ACCESS_KEY_ID`, and `R2_SECRET_ACCESS_KEY`, then run `npm run cli -- prepare` and `npm run cli -- import` yourself. Never put keys in Git, command-line arguments, or issues.
 
-## 費用與取捨
+## Cost and tradeoffs
 
-以約 92 GB 的片庫為例，若帳戶每月 10 GB 免費 R2 Standard 額度尚未被其他專案使用，儲存費約 US$1.23／月。封面、額外操作、其他專案用量與稅費另計；實際請以帳戶用量和 [Cloudflare R2 定價](https://developers.cloudflare.com/r2/pricing/)為準。這裡不做即時轉檔，主要是為了讓少量家庭播放維持簡單、便宜。[Workers](https://developers.cloudflare.com/workers/platform/pricing/) 與 [D1](https://developers.cloudflare.com/d1/platform/pricing/) 也有各自的免費額度與超額規則。
+For a library of about 92 GB, R2 Standard storage would cost roughly US$1.23/month if the account's 10 GB monthly free storage allowance is otherwise unused. Thumbnails, additional operations, other projects' usage, and taxes may add to the bill. Check your account usage and current [R2 pricing](https://developers.cloudflare.com/r2/pricing/). Avoiding real-time transcoding keeps a small family deployment simple and inexpensive. [Workers](https://developers.cloudflare.com/workers/platform/pricing/) and [D1](https://developers.cloudflare.com/d1/platform/pricing/) have their own free allowances and overage rules.
 
-## 程式在哪裡
+## Repository layout
 
-| 路徑 | 用途 |
+| Path | Purpose |
 |---|---|
-| `src/` | 找片、播放器、續看介面 |
-| `server/` | 登入、片單、進度與私人媒體路由 |
-| `cli/`、`scripts/` | 片單、帳號、封面與可重跑的上傳工具 |
-| `migrations/` | D1 資料表 |
-| `skills/family-screen-setup/` | 給 Codex 使用的安裝與驗證 skill |
-| `tests/` | 本機登入、私人播放與續看測試 |
+| `src/` | Browsing, player, and resume interface |
+| `server/` | Login, catalog, progress, and private media routes |
+| `cli/`, `scripts/` | Catalog, accounts, thumbnails, and resumable upload tools |
+| `migrations/` | D1 schema |
+| `skills/family-screen-setup/` | Codex setup, import, and verification skill |
+| `tests/` | Local authentication, private playback, and resume tests |
 
-程式碼採 MIT 授權；每個家庭自己提供的影片與帳戶資料不屬於這份開源程式碼。
+The code is MIT-licensed. Videos and account data supplied by each family are not part of this open-source repository.
 
-## 想做管理後台？
+## Want an admin interface?
 
-目前影片匯入交給 skill 和本機工具處理，網頁沒有新增、修改與刪除影片的 CRUD。如果你想做管理後台，歡迎發 PR；請讓 R2 保持私人、管理操作需要登入，且不要把上傳憑證交給瀏覽器。
+Video imports currently run through the skill and local tools. The website has no create, update, or delete interface for videos. PRs for an admin interface are welcome. Keep R2 private, require authentication for management operations, and never send upload credentials to the browser.
