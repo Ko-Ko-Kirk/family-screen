@@ -5,12 +5,13 @@ description: Set up, import curated videos into, verify, or update a family's ow
 
 # Family Screen setup
 
-Use the CLI in this repository for repeatable setup and content changes. The website is a private, parent-curated library. Its source code may be public; each family's video paths, media, credentials, manifests, and Cloudflare resources stay in that family's private environment.
+Use the CLI in this repository for repeatable setup and content changes. The website is a private, parent-curated viewer with no browser-based video upload or admin CRUD. This skill handles imports through local tools: prepare the catalog and thumbnails, upload approved media to private R2, publish metadata to D1, and verify access. Its source code may be public; each family's video paths, media, credentials, manifests, and Cloudflare resources stay in that family's private environment.
 
 ## Before changing anything
 
 - Locate the matching repository release and read its `README.md`. Run `npm run cli -- doctor`; report missing Node, ffmpeg, or Wrangler setup.
 - Look for `wrangler.jsonc` and `private/manifest.json` before creating or replacing anything. They are deliberately ignored by Git. Preserve existing resource IDs and any user edits.
+- When adding to an existing library, preserve a private copy of its manifest first. `scan` and `from-catalog` rebuild the local manifest from the supplied input; a new-only folder or catalog would omit old entries. Merge new entries with the existing manifest or scan the complete source set, then check that existing videos and approvals remain before import.
 - Use the user's stated Cloudflare account, video location, approved titles, and cost limits. If the required account login or local media location is missing, finish all independent local work and ask only for that missing input.
 - Do not place passwords, R2 API tokens, real video files, thumbnails, or a private manifest into the public repository or frontend build.
 

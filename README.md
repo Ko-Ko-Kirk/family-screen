@@ -6,6 +6,23 @@ Family Screen 是一套可以自己部署的家庭片庫：用接近 YouTube 的
 
 目前這版由一個 Cloudflare Worker 提供網頁與 API，D1 保存帳號、片單和觀看進度，私人 R2 bucket 保存 MP4 與封面。影片由 R2 按位元組範圍送給瀏覽器，不必另外轉成 HLS。電視能否順利播放，仍要用實際的電視或電視盒測試。
 
+網站目前只負責找片、播放和續看，沒有網頁後台可以上傳或管理影片。新增影片由持有者在自己的電腦上用 `$family-screen-setup` skill 協助執行本 repo 的 CLI：整理片單、產生封面、上傳到私人 R2，再更新 D1。
+
+## 用 skill 匯入影片
+
+在持有影片的電腦 clone 這份 repo，安裝 repo 內的 skill：
+
+```bash
+mkdir -p ~/.codex/skills
+cp -R skills/family-screen-setup ~/.codex/skills/
+```
+
+接著在 Codex 開啟這份 repo，指定 `$family-screen-setup`。例如：
+
+> `$family-screen-setup` 請把 `/absolute/path/to/videos` 加進我現有的 Family Screen。保留原本的片單與 Cloudflare 設定，先列出新增影片、容量和預估費用；依我選定的項目上傳，最後驗證登入保護與播放。
+
+第一次使用時，也可以請 skill 從部署開始處理。下面保留完整指令，方便知道 skill 實際會做什麼，或自行在終端機操作。增補既有片庫時要保留 `private/manifest.json`：`scan` 和 `from-catalog` 會依這次提供的來源重建本機片單，不能只掃新資料夾就直接覆蓋舊片單。
+
 ## 先在本機跑起來
 
 需要 Node.js 22 以上、npm、ffmpeg 和 ffprobe。Clone repo 後：
@@ -115,11 +132,8 @@ tail -f private/upload.log
 | `skills/family-screen-setup/` | 給 Codex 使用的安裝與驗證 skill |
 | `tests/` | 本機登入、私人播放與續看測試 |
 
-安裝 skill：
+程式碼採 MIT 授權；每個家庭自己提供的影片與帳戶資料不屬於這份開源程式碼。
 
-```bash
-mkdir -p ~/.codex/skills
-cp -R skills/family-screen-setup ~/.codex/skills/
-```
+## 想做管理後台？
 
-之後可以在新的 Codex task 指定 `$family-screen-setup`，讓它照這個 repo 的 CLI 協助部署或更新。程式碼採 MIT 授權；每個家庭自己提供的影片與帳戶資料不屬於這份開源程式碼。
+目前影片匯入交給 skill 和本機工具處理，網頁沒有新增、修改與刪除影片的 CRUD。如果你想做管理後台，歡迎發 PR；請讓 R2 保持私人、管理操作需要登入，且不要把上傳憑證交給瀏覽器。
