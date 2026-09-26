@@ -10,6 +10,30 @@ Family Screen 是一套可以自己部署的家庭片庫：用接近 YouTube 的
 
 網站目前只負責找片、播放和續看，沒有網頁後台可以上傳或管理影片。新增影片由持有者在自己的電腦上用 `$family-screen-setup` skill 協助執行本 repo 的 CLI：整理片單、產生封面、上傳到私人 R2，再更新 D1。
 
+## 先試本機示範
+
+不用 Cloudflare 帳戶、帳密或自己的影片，也能先試看片庫。準備 Node.js 22 以上，執行：
+
+```bash
+npm install
+npm run demo
+```
+
+打開 Vite 印出的本機網址。示範版使用四支原創的虛構測試影片與片單，不會連線到 Cloudflare；播放進度只存在瀏覽器的 local storage。示範素材也不會進入正式建置。素材的產生方式見 [demo 說明](demo/README.md)。
+
+若要公開展示，可以執行 `npm run demo:build`，把 `dist-demo/` 部署到另一個靜態網站。這份輸出不含 Worker API、D1／R2 綁定、帳號或私人影片；一般的 `npm run build` 仍是有登入保護的家庭片庫。
+
+![虛構素材的本機示範短片](docs/images/demo-tour.gif)
+
+<details>
+<summary>查看靜態截圖</summary>
+
+![虛構測試影片的 Family Screen 片庫](docs/images/library-demo.png)
+
+![虛構測試影片的播放器與接續播放清單](docs/images/watch-demo.png)
+
+</details>
+
 ## 用 skill 匯入影片
 
 在持有影片的電腦 clone 這份 repo，安裝 repo 內的 skill：

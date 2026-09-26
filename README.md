@@ -10,6 +10,30 @@ One Cloudflare Worker serves the website and API. D1 stores accounts, the catalo
 
 The website is for browsing, playback, and resuming. It does not have a video upload or admin interface. To add videos, use the included `$family-screen-setup` skill on the computer holding your files. It guides the local CLI through preparing the catalog and thumbnails, uploading to private R2, and publishing metadata to D1.
 
+## Try the local demo
+
+You can explore the library without a Cloudflare account, credentials, or your own videos. With Node.js 22 or newer:
+
+```bash
+npm install
+npm run demo
+```
+
+Open the local URL printed by Vite. The demo uses four original, synthetic clips and a mock catalog; it does not contact Cloudflare. Playback progress is kept in your browser's local storage. Its sample media is separate from the production build. See [how the demo media is made](demo/README.md).
+
+To host only this synthetic demo as a static site, run `npm run demo:build` and publish `dist-demo/` on a separate static host. That output has no Worker API, D1 or R2 binding, account, or private media. The regular `npm run build` continues to build the authenticated family app.
+
+![Short tour of the synthetic local demo](docs/images/demo-tour.gif)
+
+<details>
+<summary>View still screenshots</summary>
+
+![Family Screen library with synthetic demo videos](docs/images/library-demo.png)
+
+![Family Screen player and queue with a synthetic demo video](docs/images/watch-demo.png)
+
+</details>
+
 ## Import videos with the skill
 
 Clone this repository on the computer holding your videos, then install its skill:

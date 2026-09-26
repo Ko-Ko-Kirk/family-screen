@@ -1,6 +1,9 @@
 node_modules/
 dist/
+dist-demo/
 .wrangler/
+.playwright-cli/
+output/playwright/
 worker-configuration.d.ts
 wrangler.jsonc
 .env

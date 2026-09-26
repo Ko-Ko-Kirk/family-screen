@@ -8,6 +8,9 @@
   },
   "scripts": {
     "build": "tsc --noEmit && vite build",
+    "demo": "vite --mode demo --host 127.0.0.1",
+    "demo:build": "tsc --noEmit && vite build --mode demo --outDir dist-demo",
+    "demo:media": "node scripts/generate-demo-media.mjs",
     "dev": "npm run build && wrangler dev",
     "typecheck": "tsc --noEmit",
     "cf:types": "wrangler types",
