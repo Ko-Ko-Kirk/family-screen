@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import {
   ArrowLeft, ChevronRight, CirclePlay, Clock3, Film, House, ListVideo,
-  LogOut, Menu, Play, Search, SkipForward, Tv, X,
+  LogOut, Menu, Pause, Play, Search, SkipForward, Tv, X,
 } from 'lucide-react';
 import './style.css';
 
@@ -102,9 +103,19 @@ function WatchPage({ video, videos, chapters, onBack, onNext, onSelect, onProgre
   const [playbackError, setPlaybackError] = useState(false);
   const [autoNext, setAutoNext] = useState(true);
   const [mirrorMode, setMirrorMode] = useState(false);
+  const [mirrorControlsVisible, setMirrorControlsVisible] = useState(true);
+  const [controlsEpoch, setControlsEpoch] = useState(0);
+  const [paused, setPaused] = useState(true);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(video.duration_seconds);
   const collection = videos.filter((item) => item.collection === video.collection);
   const next = collection[collection.findIndex((item) => item.id === video.id) + 1];
   useEffect(() => { lastSavedAt.current = 0; setAutoplayBlocked(false); setPlaybackError(false); }, [video.id]);
+  useEffect(() => {
+    if (!mirrorMode || paused || !mirrorControlsVisible) return;
+    const timeout = window.setTimeout(() => setMirrorControlsVisible(false), 3500);
+    return () => window.clearTimeout(timeout);
+  }, [mirrorMode, paused, mirrorControlsVisible, controlsEpoch]);
   useEffect(() => {
     if (!mirrorMode) return;
     const previousOverflow = document.body.style.overflow;
@@ -130,27 +141,70 @@ function WatchPage({ video, videos, chapters, onBack, onNext, onSelect, onProgre
   function loaded() {
     const player = playerRef.current;
     if (!player) return;
+    setDuration(Number.isFinite(player.duration) ? player.duration : video.duration_seconds);
     if (video.position_seconds && video.position_seconds > 5 && video.position_seconds < video.duration_seconds - 6) {
       player.currentTime = video.position_seconds;
     }
+    setCurrentTime(player.currentTime);
     void player.play().catch(() => setAutoplayBlocked(true));
   }
   function ended() { onProgress(video.id, video.duration_seconds); if (autoNext && next) onNext(); }
   function chapterJump(seconds: number) {
     if (playerRef.current) { playerRef.current.currentTime = seconds; void playerRef.current.play(); }
   }
+  function revealMirrorControls() {
+    setMirrorControlsVisible(true);
+    setControlsEpoch((previous) => previous + 1);
+  }
+  function enterMirrorMode() {
+    const player = playerRef.current;
+    // Commit the inline player before calling play(), while the tap is still a user gesture.
+    flushSync(() => { setMirrorMode(true); revealMirrorControls(); });
+    if (player) void player.play().catch(() => { if (player.paused) setAutoplayBlocked(true); });
+  }
+  function togglePlayback() {
+    const player = playerRef.current;
+    if (!player) return;
+    if (player.paused) void player.play().catch(() => setAutoplayBlocked(true));
+    else player.pause();
+    revealMirrorControls();
+  }
+  function seekTo(seconds: number) {
+    const player = playerRef.current;
+    if (!player || !Number.isFinite(seconds)) return;
+    player.currentTime = Math.max(0, Math.min(seconds, duration));
+    setCurrentTime(player.currentTime);
+    revealMirrorControls();
+  }
   return <main className="watch-layout">
     <div className="watch-main">
       <button className="back-link" onClick={onBack}><ArrowLeft size={18} /> 返回片庫</button>
       <div className={`player-wrap${mirrorMode ? ' mirror-mode' : ''}`}>
-        <video ref={playerRef} controls playsInline disableRemotePlayback={mirrorMode} preload="metadata" poster={`/thumbnails/${video.id}.jpg`}
-          src={`/media/${video.id}.mp4`} onLoadedMetadata={loaded} onTimeUpdate={() => save()}
-          onPause={() => save(true)} onSeeked={() => save(true)} onEnded={ended} onError={() => setPlaybackError(true)} />
-        {autoplayBlocked && !playbackError && <button className="player-overlay" onClick={() => { void playerRef.current?.play(); setAutoplayBlocked(false); }}><CirclePlay size={54} /> 點擊播放</button>}
+        <video ref={playerRef} controls={!mirrorMode} playsInline preload="metadata" poster={`/thumbnails/${video.id}.jpg`}
+          src={`/media/${video.id}.mp4`} onLoadedMetadata={loaded}
+          onTimeUpdate={(event) => { setCurrentTime(event.currentTarget.currentTime); save(); }}
+          onPlay={() => { setPaused(false); setAutoplayBlocked(false); }}
+          onPause={() => { setPaused(true); save(true); }}
+          onSeeked={() => save(true)} onEnded={ended} onError={() => setPlaybackError(true)} />
+        {autoplayBlocked && !playbackError && <button className="player-overlay" onClick={() => { void playerRef.current?.play().then(() => setAutoplayBlocked(false)).catch(() => setAutoplayBlocked(true)); }}><CirclePlay size={54} /> 點擊播放</button>}
         {playbackError && <div className="player-message">影片暫時無法播放，請檢查網路或稍後再試。</div>}
-        {mirrorMode && <button className="mirror-exit" type="button" onClick={() => setMirrorMode(false)} aria-label="退出電視鏡像全畫面"><X size={18} /> 退出全畫面</button>}
+        {mirrorMode && <>
+          <button className="mirror-tap" type="button" onClick={revealMirrorControls} aria-label="顯示播放控制" />
+          <div className={`mirror-ui${mirrorControlsVisible || paused ? ' is-visible' : ''}`}>
+            <button className="mirror-exit" type="button" onClick={() => setMirrorMode(false)} aria-label="退出電視鏡像全畫面"><X size={18} /> 退出全畫面</button>
+            <div className="mirror-controls" aria-label="電視鏡像播放控制">
+              <button type="button" onClick={togglePlayback} aria-label={paused ? '播放' : '暫停'}>{paused ? <Play size={21} fill="currentColor" /> : <Pause size={21} fill="currentColor" />}</button>
+              <button type="button" onClick={() => seekTo(currentTime - 10)} aria-label="倒退 10 秒">−10</button>
+              <span className="mirror-time">{formatDuration(currentTime)}</span>
+              <input className="mirror-seek" type="range" min="0" max={Math.max(1, duration)} step="1" value={Math.min(currentTime, duration)} onChange={(event) => seekTo(Number(event.target.value))} aria-label="播放進度" />
+              <span className="mirror-time">{formatDuration(duration)}</span>
+              <button type="button" onClick={() => seekTo(currentTime + 10)} aria-label="快轉 10 秒">+10</button>
+              {next && <button type="button" onClick={onNext} aria-label="下一集"><SkipForward size={21} /></button>}
+            </div>
+          </div>
+        </>}
       </div>
-      {!mirrorMode && <div className="player-actions"><button className="mirror-start" type="button" onClick={() => setMirrorMode(true)}><Tv size={18} /> 電視鏡像全畫面</button><span>使用「螢幕鏡像輸出」時，按此按鈕並將手機轉橫向。</span></div>}
+      {!mirrorMode && <div className="player-actions"><button className="mirror-start" type="button" onClick={enterMirrorMode}><Tv size={18} /> 電視鏡像全畫面</button><span>鏡像輸出時按此播放；若要隱藏 Safari 工具列，請從分享選單加入主畫面，再由主畫面圖示開啟。</span></div>}
       <div className="watch-heading"><div><span className="eyebrow">{video.collection}{video.period ? ` · ${video.period}` : ''}</span><h1>{video.title}</h1></div>{next && <button className="next-button" onClick={onNext}>下一集 <SkipForward size={17} /></button>}</div>
       <div className="watch-meta"><span><Clock3 size={15} /> {formatDuration(video.duration_seconds)}</span><span>{video.topics.slice(0, 3).join(' · ')}</span></div>
       {chapters.length > 0 && <section className="chapters"><h2>影片章節 <small>{chapters.length} 段</small></h2><div className="chapter-list">{chapters.map((chapter, index) => <button key={`${index}-${chapter.start_seconds}`} onClick={() => chapterJump(chapter.start_seconds)}><span>{String(index + 1).padStart(2, '0')}</span><strong>{chapter.title}</strong><small>{formatDuration(chapter.start_seconds)}</small></button>)}</div></section>}
