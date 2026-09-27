@@ -101,9 +101,23 @@ function WatchPage({ video, videos, chapters, onBack, onNext, onSelect, onProgre
   const [autoplayBlocked, setAutoplayBlocked] = useState(false);
   const [playbackError, setPlaybackError] = useState(false);
   const [autoNext, setAutoNext] = useState(true);
+  const [mirrorMode, setMirrorMode] = useState(false);
   const collection = videos.filter((item) => item.collection === video.collection);
   const next = collection[collection.findIndex((item) => item.id === video.id) + 1];
   useEffect(() => { lastSavedAt.current = 0; setAutoplayBlocked(false); setPlaybackError(false); }, [video.id]);
+  useEffect(() => {
+    if (!mirrorMode) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const exitOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMirrorMode(false);
+    };
+    document.addEventListener('keydown', exitOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', exitOnEscape);
+    };
+  }, [mirrorMode]);
   function save(force = false) {
     const player = playerRef.current;
     if (!player || !Number.isFinite(player.currentTime) || player.currentTime < 0) return;
@@ -128,13 +142,15 @@ function WatchPage({ video, videos, chapters, onBack, onNext, onSelect, onProgre
   return <main className="watch-layout">
     <div className="watch-main">
       <button className="back-link" onClick={onBack}><ArrowLeft size={18} /> 返回片庫</button>
-      <div className="player-wrap">
-        <video ref={playerRef} controls playsInline preload="metadata" poster={`/thumbnails/${video.id}.jpg`}
+      <div className={`player-wrap${mirrorMode ? ' mirror-mode' : ''}`}>
+        <video ref={playerRef} controls playsInline disableRemotePlayback={mirrorMode} preload="metadata" poster={`/thumbnails/${video.id}.jpg`}
           src={`/media/${video.id}.mp4`} onLoadedMetadata={loaded} onTimeUpdate={() => save()}
           onPause={() => save(true)} onSeeked={() => save(true)} onEnded={ended} onError={() => setPlaybackError(true)} />
         {autoplayBlocked && !playbackError && <button className="player-overlay" onClick={() => { void playerRef.current?.play(); setAutoplayBlocked(false); }}><CirclePlay size={54} /> 點擊播放</button>}
         {playbackError && <div className="player-message">影片暫時無法播放，請檢查網路或稍後再試。</div>}
+        {mirrorMode && <button className="mirror-exit" type="button" onClick={() => setMirrorMode(false)} aria-label="退出電視鏡像全畫面"><X size={18} /> 退出全畫面</button>}
       </div>
+      {!mirrorMode && <div className="player-actions"><button className="mirror-start" type="button" onClick={() => setMirrorMode(true)}><Tv size={18} /> 電視鏡像全畫面</button><span>使用「螢幕鏡像輸出」時，按此按鈕並將手機轉橫向。</span></div>}
       <div className="watch-heading"><div><span className="eyebrow">{video.collection}{video.period ? ` · ${video.period}` : ''}</span><h1>{video.title}</h1></div>{next && <button className="next-button" onClick={onNext}>下一集 <SkipForward size={17} /></button>}</div>
       <div className="watch-meta"><span><Clock3 size={15} /> {formatDuration(video.duration_seconds)}</span><span>{video.topics.slice(0, 3).join(' · ')}</span></div>
       {chapters.length > 0 && <section className="chapters"><h2>影片章節 <small>{chapters.length} 段</small></h2><div className="chapter-list">{chapters.map((chapter, index) => <button key={`${index}-${chapter.start_seconds}`} onClick={() => chapterJump(chapter.start_seconds)}><span>{String(index + 1).padStart(2, '0')}</span><strong>{chapter.title}</strong><small>{formatDuration(chapter.start_seconds)}</small></button>)}</div></section>}

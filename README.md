@@ -8,6 +8,8 @@ Family Screen is a self-hosted family video library. Viewers can browse videos, 
 
 One Cloudflare Worker serves the website and API. D1 stores accounts, the catalog, and watch progress; a private R2 bucket stores MP4 files and thumbnails. The Worker serves byte ranges from R2, so the app does not need an HLS transcoding server. Test playback on the actual TV or streaming device you plan to use.
 
+When mirroring an iPhone screen to a TV, use **TV Mirror Full View** below the player instead of Safari's native video fullscreen button. This fills the screen while keeping playback on the phone, avoiding Safari's switch from screen mirroring to AirPlay Video. Rotate the phone to landscape for the largest picture. The mode persists when the next video starts; its exit button returns to the regular page. Direct AirPlay remains available outside this mode.
+
 The website is for browsing, playback, and resuming. It does not have a video upload or admin interface. To add videos, use the included `$family-screen-setup` skill on the computer holding your files. It guides the local CLI through preparing the catalog and thumbnails, uploading to private R2, and publishing metadata to D1.
 
 ## Try the local demo
