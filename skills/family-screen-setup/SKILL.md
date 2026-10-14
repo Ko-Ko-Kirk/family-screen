@@ -11,6 +11,7 @@ Use the CLI in this repository for repeatable setup and content changes. The web
 
 - Locate the matching repository release and read its `README.md`. Run `npm run cli -- doctor`; report missing Node, ffmpeg, or Wrangler setup.
 - Look for `wrangler.jsonc` and `private/manifest.json` before creating or replacing anything. They are deliberately ignored by Git. Preserve existing resource IDs and any user edits.
+- If `private/IMPORT-NOTES.md` exists, read it and its referenced source-to-episode ledger. Check active imports before starting another job. Refresh recorded progress from download and publication receipts; discovered sources are not necessarily published videos.
 - When adding to an existing library, preserve a private copy of its manifest first. `scan` and `from-catalog` rebuild the local manifest from the supplied input; a new-only folder or catalog would omit old entries. Merge new entries with the existing manifest or scan the complete source set, then check that existing videos and approvals remain before import.
 - Use the user's stated Cloudflare account, video location, approved titles, and cost limits. If the required account login or local media location is missing, finish all independent local work and ask only for that missing input.
 - Do not place passwords, R2 API tokens, real video files, thumbnails, or a private manifest into the public repository or frontend build.
@@ -37,6 +38,7 @@ Use the CLI in this repository for repeatable setup and content changes. The web
 - Keep the ignored `wrangler.jsonc` and `private/` data while changing code versions. Apply new D1 migrations before using APIs that depend on them. Back up the D1 data before a schema upgrade.
 - Re-run imports for changed approved media. They compare local SHA-256 and remote metadata and reuse matching objects.
 - For incremental content, preserve all existing manifest entries and use `prepare --ids <new-ids>`, `estimate --ids <new-ids>`, and `import --ids <new-ids>` to process only the new approved entries. `scan` and `from-catalog` still rebuild the manifest, so combine old and new input before using them.
+- When synchronizing course lessons, compare permanent source IDs and media identities. Keep verified episode memberships, chapter cuts and video IDs stable; append new episodes rather than repartitioning a published course. Save source-to-output mappings and verification receipts in the ignored private ledger. Future syncs follow the user's requested scope; recording state does not create a new monitoring schedule.
 - Verify anonymous `/api/catalog` and ranged media requests return HTTP 401. Confirm a signed-in video request returns HTTP 206 and valid `Content-Range`, and that progress survives a new browser session.
 - If Cloudflare access, R2 credentials, or free-plan resource limits block a step, report the exact blocker and continue other local work. Do not claim a deployment is complete until the live URL and protected media have been checked.
 
