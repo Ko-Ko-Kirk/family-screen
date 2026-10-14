@@ -12,6 +12,8 @@ When mirroring an iPhone screen to a TV, use **TV Mirror Full View** below the p
 
 Safari's address and tab bars belong to the browser, so a webpage cannot hide them. For a larger TV picture, in iPhone Safari tap **Share → Add to Home Screen**, then open Family Screen from its new Home Screen icon. It runs in a standalone window without Safari's bars. You may need to sign in again there. Use **Screen Mirroring** from Control Center, then **TV Mirror Full View** in the player. This is an optional display setting; the site does not cache private videos for offline use.
 
+The login page and library include an **Add to Home Screen** guide with three illustrated steps for iPhone Safari. iPhone browsers show a hint that can be collapsed; the guide stays available afterward. When opened from the Home Screen in standalone mode, the hint and guide are hidden.
+
 The website is for browsing, playback, and resuming. It does not have a video upload or admin interface. To add videos, use the included `$family-screen-setup` skill on the computer holding your files. It guides the local CLI through preparing the catalog and thumbnails, uploading to private R2, and publishing metadata to D1.
 
 ## Try the local demo
