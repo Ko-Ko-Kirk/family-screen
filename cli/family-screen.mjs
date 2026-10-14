@@ -5,6 +5,7 @@ import { join, resolve, relative, dirname, extname, basename, sep } from 'node:p
 import { spawnSync } from 'node:child_process';
 import { S3Client, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
+import { selectApprovedVideos } from './select-videos.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const privateDir = join(root, 'private');
@@ -53,9 +54,9 @@ function escapeSql(value) { return `'${String(value).replaceAll("'", "''")}'`; }
 function sqlValue(value) { return value == null ? 'NULL' : typeof value === 'number' ? String(value) : escapeSql(value); }
 function sqlValues(values) { return values.map(sqlValue).join(', '); }
 function selectedVideos() {
-  const approved = loadManifest().videos.filter((video) => video.approved);
-  const limit = flag('limit');
-  return limit ? approved.slice(0, Number(limit)) : approved;
+  const ids = hasFlag('ids') ? must(flag('ids'), '--ids ID1,ID2') : '';
+  const limit = hasFlag('limit') ? must(flag('limit'), '--limit 正整數') : '';
+  return selectApprovedVideos(loadManifest().videos, { ids, limit });
 }
 
 function init() {
@@ -345,10 +346,10 @@ function help() {
   scan --dir /path/to/videos            掃描 H.264/AAC MP4
   from-catalog --input catalog.json     轉換現有影片清單
   approve --ids ID1,ID2 | --all         確認可發布影片
-  prepare [--limit 3]                   產生封面
-  estimate [--limit 3]                  估算影片儲存費
+  prepare [--ids ID1,ID2] [--limit 3]    產生封面
+  estimate [--ids ID1,ID2] [--limit 3]   估算影片儲存費
   user-add --username family [--local]  產生高強度密碼並寫入 D1
-  import [--limit 3] [--local]          上傳並發布；遠端預設使用 S3 multipart
+  import [--ids ID1,ID2] [--limit 3] [--local] 上傳並發布；遠端預設使用 S3 multipart
   import --limit 3 --wrangler          小檔試播：沿用 Wrangler 登入上傳
   verify --url URL [--video-id ID]      驗證匿名無法讀取影片`);
 }

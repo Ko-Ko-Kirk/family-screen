@@ -97,6 +97,8 @@ Only use `--all` if you intend to publish every entry in the manifest:
 npm run cli -- approve --all
 ```
 
+When extending an existing manifest, `prepare`, `estimate`, and `import` accept `--ids ID1,ID2` to process only the new approved entries. Unknown or unapproved IDs stop the command before it writes anything. A `--limit` applies after this selection; existing entries and their approval stay in the manifest.
+
 Estimate storage and prepare thumbnails for three trial videos:
 
 ```bash

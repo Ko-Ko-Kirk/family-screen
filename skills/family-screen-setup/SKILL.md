@@ -36,6 +36,7 @@ Use the CLI in this repository for repeatable setup and content changes. The web
 
 - Keep the ignored `wrangler.jsonc` and `private/` data while changing code versions. Apply new D1 migrations before using APIs that depend on them. Back up the D1 data before a schema upgrade.
 - Re-run imports for changed approved media. They compare local SHA-256 and remote metadata and reuse matching objects.
+- For incremental content, preserve all existing manifest entries and use `prepare --ids <new-ids>`, `estimate --ids <new-ids>`, and `import --ids <new-ids>` to process only the new approved entries. `scan` and `from-catalog` still rebuild the manifest, so combine old and new input before using them.
 - Verify anonymous `/api/catalog` and ranged media requests return HTTP 401. Confirm a signed-in video request returns HTTP 206 and valid `Content-Range`, and that progress survives a new browser session.
 - If Cloudflare access, R2 credentials, or free-plan resource limits block a step, report the exact blocker and continue other local work. Do not claim a deployment is complete until the live URL and protected media have been checked.
 

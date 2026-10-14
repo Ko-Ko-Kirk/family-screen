@@ -97,6 +97,8 @@ npm run cli -- approve --ids ID1,ID2,ID3
 npm run cli -- approve --all
 ```
 
+往既有片庫加影片時，`prepare`、`estimate`、`import` 可加 `--ids ID1,ID2`，只處理指定的新影片。ID 不存在或尚未核准時，指令會先停止；`--limit` 則套用在選出的影片上。既有片單與核准狀態會保留。
+
 接著估算容量，先產生三支試播影片的封面：
 
 ```bash
