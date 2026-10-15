@@ -144,7 +144,10 @@ function WatchPage({ video, videos, chapters, onBack, onNext, onSelect, onProgre
     const player = playerRef.current;
     if (!player) return;
     setDuration(Number.isFinite(player.duration) ? player.duration : video.duration_seconds);
-    if (video.position_seconds && video.position_seconds > 5 && video.position_seconds < video.duration_seconds - 6) {
+    const requestedTime = new URLSearchParams(location.search).get('t');
+    if (requestedTime !== null && Number.isFinite(Number(requestedTime)) && Number(requestedTime) >= 0) {
+      player.currentTime = Math.min(Number(requestedTime), Math.max(0, video.duration_seconds - 1));
+    } else if (video.position_seconds && video.position_seconds > 5 && video.position_seconds < video.duration_seconds - 6) {
       player.currentTime = video.position_seconds;
     }
     setCurrentTime(player.currentTime);
