@@ -43,3 +43,7 @@ Use the CLI in this repository for repeatable setup and content changes. The web
 - If Cloudflare access, R2 credentials, or free-plan resource limits block a step, report the exact blocker and continue other local work. Do not claim a deployment is complete until the live URL and protected media have been checked.
 
 The repository's Cloudflare configuration targets low ongoing cost for a few family viewers. R2 storage is the main recurring cost once free storage is exceeded. Use the current Cloudflare pricing pages for estimates.
+
+## Audio imports
+
+MP3 and AAC M4A use the same private import workflow. Keep `media_type: "audio"`, `media_format: "mp3"` or `"m4a"`, and a stable, numerically padded `sort_key` per chapter. The player uses an audio element, keeps progress per account, and advances only within the same collection. An optional local `subtitle_path` supplies UTF-8 WebVTT under 1 MB; captions require the same login as media. Do not invent precise alignment for estimated timings or call paid speech services without authorization. Apply the additive audio migration before deployment. Verify anonymous audio and subtitle requests return 401, authenticated audio Range returns 206 with the audio MIME type, existing videos remain playable, and resume survives a new login. Check automatic next playback and captions in a browser; physical iPhone/TV behavior needs actual device testing.

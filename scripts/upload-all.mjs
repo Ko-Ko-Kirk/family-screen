@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { S3Client, HeadObjectCommand } from '@aws-sdk/client-s3';
+import { mediaSpec } from '../cli/media.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const privateDir = join(root, 'private');
@@ -68,7 +69,7 @@ try {
     credentials: { accessKeyId: credentials.accessKeyId, secretAccessKey: credentials.secretAccessKey },
   });
   const head = await client.send(new HeadObjectCommand({
-    Bucket: credentials.bucket, Key: `videos/${videos[0].id}.mp4`,
+    Bucket: credentials.bucket, Key: mediaSpec(videos[0]).key,
   }));
   client.destroy();
   if (head.ContentLength !== videos[0].bytes) throw new Error('R2 試播影片大小不符');

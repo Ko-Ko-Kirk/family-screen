@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { S3Client, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import { selectApprovedVideos } from './select-videos.mjs';
+import { mediaSpec } from './media.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const privateDir = join(root, 'private');
@@ -78,19 +79,21 @@ function init() {
 function walk(directory) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((item) => {
     const path = join(directory, item.name);
-    return item.isDirectory() ? walk(path) : item.isFile() && /\.mp4$/i.test(item.name) ? [path] : [];
+    return item.isDirectory() ? walk(path) : item.isFile() && /\.(mp4|mp3|m4a)$/i.test(item.name) ? [path] : [];
   });
 }
 function probe(path) {
-  const result = spawnSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration:stream=codec_name,codec_type', '-of', 'json', path], { encoding: 'utf8' });
+  const result = spawnSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration:stream=codec_name,codec_type:stream_disposition=attached_pic', '-of', 'json', path], { encoding: 'utf8' });
   if (result.status !== 0) throw new Error(`ffprobe 無法讀取 ${path}`);
   const media = JSON.parse(result.stdout);
   const duration = Number(media.format?.duration);
   if (!Number.isFinite(duration) || duration <= 0) throw new Error(`影片時長異常：${path}`);
-  const video = media.streams?.find((stream) => stream.codec_type === 'video');
+  const video = media.streams?.find((stream) => stream.codec_type === 'video' && !stream.disposition?.attached_pic);
   const audio = media.streams?.find((stream) => stream.codec_type === 'audio');
-  if (video?.codec_name !== 'h264' || (audio && audio.codec_name !== 'aac')) {
-    throw new Error(`只接受有 H.264 影像、AAC 音訊的 MP4：${path}`);
+  const { type, format } = mediaSpec({ source_path: path });
+  if (type === 'audio' ? video || !audio || audio.codec_name !== (format === 'mp3' ? 'mp3' : 'aac')
+    : video?.codec_name !== 'h264' || (audio && audio.codec_name !== 'aac')) {
+    throw new Error(`只接受 H.264/AAC MP4、純音訊 MP3 或 AAC M4A：${path}`);
   }
   return duration;
 }
@@ -107,7 +110,8 @@ function scan() {
     const rel = relative(directory, path);
     return {
       id: slugFromPath(rel), title: name, collection: dirname(rel) === '.' ? '家庭影片' : dirname(rel).split('/')[0],
-      kind: 'video', period: null, duration_seconds: probe(path), bytes: statSync(path).size,
+      kind: mediaSpec({ source_path: path }).type, media_type: mediaSpec({ source_path: path }).type,
+      media_format: mediaSpec({ source_path: path }).format, period: null, duration_seconds: probe(path), bytes: statSync(path).size,
       topics: [], chapters: [], source_path: path, sort_key: rel, approved: false,
     };
   });
@@ -134,6 +138,9 @@ function fromCatalog() {
       id, title: String(title),
       collection: String(row.collection || row.version || row.category || '家庭影片'),
       kind: String(row.kind || 'video'), period: row.period || null,
+      media_type: mediaSpec({ ...row, source_path: source }).type,
+      media_format: mediaSpec({ ...row, source_path: source }).format,
+      subtitle_path: row.subtitle_path || null,
       duration_seconds: Number(row.duration_seconds), bytes,
       topics,
       chapters: Array.isArray(row.chapters) ? row.chapters.map((chapter) => ({
@@ -170,10 +177,14 @@ function prepare() {
     const outputPath = join(outputDir, `${video.id}.jpg`);
     if (existsSync(outputPath) && !hasFlag('force')) continue;
     const at = Math.min(30, Math.max(1, video.duration_seconds * 0.2));
-    const result = spawnSync('ffmpeg', [
+    const params = mediaSpec(video).type === 'audio' ? [
+      '-hide_banner', '-loglevel', 'error', '-t', '30', '-i', video.source_path,
+      '-filter_complex', 'showwavespic=s=640x360:colors=0xf25541', '-frames:v', '1', '-y', outputPath,
+    ] : [
       '-hide_banner', '-loglevel', 'error', '-ss', String(at), '-i', video.source_path,
       '-frames:v', '1', '-vf', 'scale=640:-2', '-q:v', '4', '-y', outputPath,
-    ], { stdio: 'inherit' });
+    ];
+    const result = spawnSync('ffmpeg', params, { stdio: 'inherit' });
     if (result.status !== 0 || !existsSync(outputPath)) throw new Error(`封面產生失敗：${video.id}`);
   }
   console.log(`封面準備完成：${videos.length} 支。`);
@@ -296,18 +307,28 @@ async function importVideos() {
     if (statSync(video.source_path).size !== video.bytes) throw new Error(`來源容量改變：${video.id}`);
     const thumbnail = join(thumbnailDir, `${video.id}.jpg`);
     if (!existsSync(thumbnail)) throw new Error(`缺少封面：${video.id}，先執行 prepare`);
-    const mediaKey = `videos/${video.id}.mp4`;
+    const spec = mediaSpec(video);
+    if (Math.abs(probe(video.source_path) - video.duration_seconds) > 1) throw new Error(`來源時長改變：${video.id}`);
+    const mediaKey = spec.key;
     const thumbnailKey = `thumbnails/${video.id}.jpg`;
+    const subtitleKey = video.subtitle_path ? `subtitles/${video.id}.vtt` : null;
+    if (subtitleKey && (statSync(video.subtitle_path).size > 1_000_000
+      || !readFileSync(video.subtitle_path, 'utf8').startsWith('WEBVTT\n'))) throw new Error(`字幕格式無效：${video.id}`);
     console.log(`[${index + 1}/${videos.length}] ${video.title}`);
-    console.log(`  影片 ${useWrangler ? uploadWranglerFile(bucket, mediaKey, video.source_path, local, 'video/mp4') : await uploadFile(client, bucket, mediaKey, video.source_path, 'video/mp4')}`);
+    console.log(`  媒體 ${useWrangler ? uploadWranglerFile(bucket, mediaKey, video.source_path, local, spec.contentType) : await uploadFile(client, bucket, mediaKey, video.source_path, spec.contentType)}`);
     console.log(`  封面 ${useWrangler ? uploadWranglerFile(bucket, thumbnailKey, thumbnail, local, 'image/jpeg') : await uploadFile(client, bucket, thumbnailKey, thumbnail, 'image/jpeg')}`);
-    statements.push(`INSERT INTO videos (id,title,collection,kind,period,duration_seconds,bytes,topics_json,media_key,thumbnail_key,sort_key,published)
+    if (subtitleKey) {
+      if (useWrangler) uploadWranglerFile(bucket, subtitleKey, video.subtitle_path, local, 'text/vtt; charset=utf-8');
+      else await uploadFile(client, bucket, subtitleKey, video.subtitle_path, 'text/vtt; charset=utf-8');
+    }
+    statements.push(`INSERT INTO videos (id,title,collection,kind,period,duration_seconds,bytes,topics_json,media_key,thumbnail_key,sort_key,published,media_type,media_format,subtitle_key)
       VALUES (${sqlValues([video.id, video.title, video.collection, video.kind, video.period, video.duration_seconds, video.bytes,
-        JSON.stringify(video.topics), mediaKey, thumbnailKey, video.sort_key, 1])})
+        JSON.stringify(video.topics), mediaKey, thumbnailKey, video.sort_key, 1, spec.type, spec.format, subtitleKey])})
       ON CONFLICT(id) DO UPDATE SET title=excluded.title, collection=excluded.collection, kind=excluded.kind,
         period=excluded.period, duration_seconds=excluded.duration_seconds, bytes=excluded.bytes,
         topics_json=excluded.topics_json, media_key=excluded.media_key, thumbnail_key=excluded.thumbnail_key,
-        sort_key=excluded.sort_key, published=1;`);
+        sort_key=excluded.sort_key, published=1, media_type=excluded.media_type, media_format=excluded.media_format,
+        subtitle_key=excluded.subtitle_key;`);
     statements.push(`DELETE FROM chapters WHERE video_id=${escapeSql(video.id)};`);
     for (const [chapterIndex, chapter] of video.chapters.entries()) {
       statements.push(`INSERT INTO chapters (video_id,chapter_index,title,start_seconds) VALUES (${sqlValues([video.id, chapterIndex, chapter.title, chapter.start_seconds])});`);
@@ -343,7 +364,7 @@ function help() {
   console.log(`Family Screen CLI
   init --name my-family-screen        建立私人站台設定
   doctor                                檢查本機環境
-  scan --dir /path/to/videos            掃描 H.264/AAC MP4
+  scan --dir /path/to/media             掃描 H.264/AAC MP4、MP3、AAC M4A
   from-catalog --input catalog.json     轉換現有影片清單
   approve --ids ID1,ID2 | --all         確認可發布影片
   prepare [--ids ID1,ID2] [--limit 3]    產生封面

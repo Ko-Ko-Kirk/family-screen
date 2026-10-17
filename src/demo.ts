@@ -1,7 +1,8 @@
 // Local, synthetic data only. This module is loaded in Vite's demo mode, never by the Worker.
 type DemoVideo = {
-  id: string; title: string; collection: string; kind: 'video'; period: null;
+  id: string; title: string; collection: string; kind: 'video' | 'audio'; period: null;
   duration_seconds: number; bytes: number; topics: string[]; sort_key: string;
+  media_type?: 'audio'; media_format?: 'mp3'; has_subtitles?: number;
 };
 
 const videos: DemoVideo[] = [
@@ -9,6 +10,8 @@ const videos: DemoVideo[] = [
   { id: 'demo-shapes-02', title: '形狀遊戲', collection: '探索時間', kind: 'video', period: null, duration_seconds: 20, bytes: 0, topics: ['形狀', '遊戲'], sort_key: '02' },
   { id: 'demo-stars-03', title: '夜空小旅行', collection: '想像故事', kind: 'video', period: null, duration_seconds: 20, bytes: 0, topics: ['星星', '想像'], sort_key: '01' },
   { id: 'demo-numbers-04', title: '一起數到十', collection: '一起學習', kind: 'video', period: null, duration_seconds: 20, bytes: 0, topics: ['數字', '節奏'], sort_key: '01' },
+  { id: 'demo-audio-01', title: '第 1 章 · 聲音示範', collection: '有聲書示範', kind:'audio', period:null, duration_seconds:30, bytes:0, topics:['音訊','合成音調'],sort_key:'0001',media_type:'audio',media_format:'mp3',has_subtitles:1 },
+  { id: 'demo-audio-02', title: '第 2 章 · 接續播放', collection: '有聲書示範', kind:'audio', period:null, duration_seconds:30, bytes:0, topics:['音訊','合成音調'],sort_key:'0002',media_type:'audio',media_format:'mp3',has_subtitles:1 },
 ];
 
 const chapters: Record<string, { title: string; start_seconds: number }[]> = {
@@ -41,13 +44,13 @@ export async function demoApi<T>(path: string, options?: RequestInit): Promise<T
       return {
         ...video,
         position_seconds: entry?.position_seconds ?? null,
-        completed: entry ? Number(entry.position_seconds >= video.duration_seconds - 5) : null,
+        completed: entry ? Number(entry.position_seconds >= video.duration_seconds - (video.media_type === 'audio' ? 0.25 : 5)) : null,
         updated_at: entry?.updated_at ?? null,
       };
     }) } as T;
   }
   const chapterId = /^\/api\/videos\/([a-z0-9-]+)\/chapters$/.exec(path)?.[1];
-  if (chapterId && chapters[chapterId]) return { chapters: chapters[chapterId] } as T;
+  if (chapterId && videos.some((video) => video.id === chapterId)) return { chapters: chapters[chapterId] || [] } as T;
   const progressId = /^\/api\/progress\/([a-z0-9-]+)$/.exec(path)?.[1];
   if (progressId && method === 'PUT' && videos.some((video) => video.id === progressId)) {
     const body = JSON.parse(String(options?.body)) as { position_seconds: number };

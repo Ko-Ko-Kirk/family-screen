@@ -5,6 +5,7 @@ type VideoRow = {
   id: string; title: string; collection: string; kind: string; period: string | null;
   duration_seconds: number; bytes: number; topics_json: string; sort_key: string;
   position_seconds: number | null; completed: number | null; updated_at: number | null;
+  media_type: 'video' | 'audio'; media_format: 'mp4' | 'mp3' | 'm4a'; has_subtitles: number;
 };
 
 const app = new Hono<AppEnv>();
@@ -40,6 +41,7 @@ const authorize: MiddlewareHandler<AppEnv> = async (context, next) => {
 app.use('/api/*', authorize);
 app.use('/media/*', authorize);
 app.use('/thumbnails/*', authorize);
+app.use('/subtitles/*', authorize);
 
 async function limitedJson(context: Parameters<MiddlewareHandler<AppEnv>>[0], limit: number): Promise<{ body: unknown } | { error: 'too_large' | 'invalid' }> {
   const contentLength = Number(context.req.header('Content-Length'));
@@ -110,7 +112,8 @@ app.get('/api/catalog', async (context) => {
   const viewer = context.get('viewer');
   const result = await context.env.DB.prepare(`
     SELECT v.id, v.title, v.collection, v.kind, v.period, v.duration_seconds,
-      v.bytes, v.topics_json, v.sort_key,
+      v.bytes, v.topics_json, v.sort_key, v.media_type, v.media_format,
+      (v.subtitle_key IS NOT NULL) AS has_subtitles,
       p.position_seconds, p.completed, p.updated_at
     FROM videos v
     LEFT JOIN watch_progress p ON p.video_id = v.id AND p.user_id = ?
@@ -134,8 +137,8 @@ app.put('/api/progress/:id', async (context) => {
   const parsed = await limitedJson(context, 1024);
   if ('error' in parsed && parsed.error === 'too_large') return context.json({ error: '請求過大' }, 413);
   const id = context.req.param('id');
-  const video = await context.env.DB.prepare('SELECT duration_seconds FROM videos WHERE id = ? AND published = 1')
-    .bind(id).first<{ duration_seconds: number }>();
+  const video = await context.env.DB.prepare('SELECT duration_seconds, media_type FROM videos WHERE id = ? AND published = 1')
+    .bind(id).first<{ duration_seconds: number; media_type: string }>();
   if (!video) return context.json({ error: '找不到影片' }, 404);
   const body: unknown = 'body' in parsed ? parsed.body : null;
   const position = typeof body === 'object' && body !== null && 'position_seconds' in body
@@ -143,7 +146,7 @@ app.put('/api/progress/:id', async (context) => {
   if (typeof position !== 'number' || !Number.isFinite(position) || position < 0 || position > video.duration_seconds + 2) {
     return context.json({ error: '播放位置無效' }, 400);
   }
-  const completed = position >= video.duration_seconds - 5 ? 1 : 0;
+  const completed = position >= video.duration_seconds - (video.media_type === 'audio' ? 0.25 : 5) ? 1 : 0;
   await context.env.DB.prepare(`
     INSERT INTO watch_progress (user_id, video_id, position_seconds, completed, updated_at)
     VALUES (?, ?, ?, ?, unixepoch())
@@ -175,11 +178,12 @@ export { parseRange };
 
 const media = async (context: Parameters<MiddlewareHandler<AppEnv>>[0]) => {
   const filename = context.req.param('filename');
-  if (!filename || !/^[a-zA-Z0-9_-]{6,64}\.mp4$/.test(filename)) return context.json({ error: '找不到影片' }, 404);
+  if (!filename || !/^[a-zA-Z0-9_-]{6,64}\.(mp4|mp3|m4a)$/.test(filename)) return context.json({ error: '找不到媒體' }, 404);
   const id = filename.slice(0, -4);
-  const video = await context.env.DB.prepare('SELECT media_key FROM videos WHERE id = ? AND published = 1')
-    .bind(id).first<{ media_key: string }>();
-  if (!video) return context.json({ error: '找不到影片' }, 404);
+  const video = await context.env.DB.prepare('SELECT media_key, media_format, media_type FROM videos WHERE id = ? AND published = 1')
+    .bind(id).first<{ media_key: string; media_format: 'mp4' | 'mp3' | 'm4a'; media_type: string }>();
+  if (!video || filename !== `${id}.${video.media_format}`
+    || (video.media_type === 'audio') !== (video.media_format !== 'mp4')) return context.json({ error: '找不到媒體' }, 404);
   const object = await context.env.MEDIA.head(video.media_key);
   if (!object) return context.json({ error: '影片尚未上傳完成' }, 404);
   const range = parseRange(context.req.header('Range'), object.size);
@@ -187,7 +191,7 @@ const media = async (context: Parameters<MiddlewareHandler<AppEnv>>[0]) => {
     return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${object.size}`, 'Accept-Ranges': 'bytes' } });
   }
   const headers = new Headers({
-    'Content-Type': 'video/mp4',
+    'Content-Type': { mp4: 'video/mp4', mp3: 'audio/mpeg', m4a: 'audio/mp4' }[video.media_format],
     'Accept-Ranges': 'bytes',
     'Cache-Control': 'private, no-store',
     'X-Content-Type-Options': 'nosniff',
@@ -207,6 +211,22 @@ const media = async (context: Parameters<MiddlewareHandler<AppEnv>>[0]) => {
 
 app.get('/media/:filename', media);
 app.on('HEAD', '/media/:filename', media);
+
+app.get('/subtitles/:filename', async (context) => {
+  const filename = context.req.param('filename');
+  if (!/^[a-zA-Z0-9_-]{6,64}\.vtt$/.test(filename)) return context.notFound();
+  const row = await context.env.DB.prepare('SELECT subtitle_key FROM videos WHERE id = ? AND published = 1')
+    .bind(filename.slice(0, -4)).first<{ subtitle_key: string | null }>();
+  if (!row?.subtitle_key) return context.notFound();
+  const info = await context.env.MEDIA.head(row.subtitle_key);
+  if (!info || info.size > 1_000_000) return context.notFound();
+  const object = await context.env.MEDIA.get(row.subtitle_key);
+  if (!object) return context.notFound();
+  return new Response(object.body, { headers: {
+    'Content-Type': 'text/vtt; charset=utf-8', 'Cache-Control': 'private, no-store',
+    'X-Content-Type-Options': 'nosniff',
+  } });
+});
 
 app.get('/thumbnails/:filename', async (context) => {
   const filename = context.req.param('filename');

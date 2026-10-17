@@ -1,4 +1,4 @@
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 
 // Original color-and-shape clips. No family media, stock footage, or network input.
@@ -13,6 +13,13 @@ function run(args) {
   const result = spawnSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', ...args], { stdio: 'inherit' });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`ffmpeg exited with status ${result.status}`);
+}
+
+mkdirSync('demo/public/subtitles', { recursive:true });
+for (const [index, frequency] of [220,330].entries()) {
+  const id = `demo-audio-0${index+1}`;
+  run(['-f','lavfi','-i',`sine=frequency=${frequency}:duration=30`,'-c:a','libmp3lame','-b:a','64k',`demo/public/media/${id}.mp3`]);
+  writeFileSync(`demo/public/subtitles/${id}.vtt`, 'WEBVTT\n\n00:00:00.000 --> 00:00:15.000\n這是原創合成音調，示範音訊播放與正體中文字幕。\n\n00:00:15.000 --> 00:00:30.000\n播放完畢後，會接續同一分類的下一章。\n');
 }
 
 mkdirSync('demo/public/media', { recursive: true });

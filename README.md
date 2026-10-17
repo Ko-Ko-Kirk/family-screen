@@ -106,7 +106,7 @@ npm run cli -- estimate
 npm run cli -- prepare --limit 3
 ```
 
-`scan` accepts MP4 files with H.264 video and, when audio is present, AAC audio. Other formats need conversion first. These codecs help browsers and TVs play files directly. `prepare` generates thumbnails; `estimate` reports storage and its cost assumptions.
+`scan` accepts H.264/AAC MP4, MP3 audio, and AAC M4A audio. Other formats need conversion first. These codecs help browsers and TVs play files directly. `prepare` generates thumbnails; `estimate` reports storage and its cost assumptions.
 
 ## Deploy to your Cloudflare account
 
@@ -171,3 +171,9 @@ The code is MIT-licensed. Videos and account data supplied by each family are no
 ## Want an admin interface?
 
 Video imports currently run through the skill and local tools. The website has no create, update, or delete interface for videos. PRs for an admin interface are welcome. Keep R2 private, require authentication for management operations, and never send upload credentials to the browser.
+
+## Audiobooks and podcasts
+
+Audio files use the same private login, byte-range delivery, collection queue, and per-account progress as videos. Import MP3 or AAC M4A through the skill/CLI. The audio view includes 15-second skip buttons, playback speed, and a continue-listening shortcut that remembers both the chapter and position. Chapter order follows `sort_key`; use padded numbers such as `0305`, `0306`. Automatic next playback stays in the same collection. A browser may require an initial tap, and background/lock-screen behavior should be checked on your phone.
+
+An optional `subtitle_path` in a catalog row points to a local UTF-8 WebVTT file under 1 MB. The import uploads it privately alongside the audio. The player displays plain-text Traditional Chinese cues and lets viewers hide them. Subtitle text is authenticated like the audio; it is never bundled into the static website. Approximate timing should be disclosed in the cues/source workflow; this player does not run or charge for transcription or alignment. Existing media IDs and playback progress survive the additive `0003_audio.sql` migration.
