@@ -1,6 +1,6 @@
 ---
 name: family-screen-setup
-description: Set up, import curated videos into, verify, or update a family's own Cloudflare-hosted Family Screen instance. Use with the matching Family Screen repository and its CLI, not for general video editing.
+description: Set up, import curated video or audio into, update captions for, or verify a family's own Cloudflare-hosted Family Screen instance. Use with the matching Family Screen repository and its CLI, not for general media editing.
 ---
 
 # Family Screen setup
@@ -34,6 +34,8 @@ Use the CLI in this repository for repeatable setup and content changes. The web
 - Run `npm run cli -- verify --url <site-url> --video-id <published-id>` and test a signed-in desktop browser. Test the actual television's login, remote navigation, H.264/AAC playback, seek, autoplay, and resume before claiming TV support.
 
 ## Updating and troubleshooting
+
+- For local subtitle alignment or captions on existing media, read `docs/captions.md` in the matching repository root. Preserve originals and any approved omission log under `private/`. Follow the owner's stated choice when narration skips source text; do not invent timestamps or silently remove text. Use `captions --ids ... --dry-run`, then `captions --ids ...` to update only the selected subtitles through the existing Wrangler login. Validate the live VTT and access protection and confirm the saved playback position remains. This workflow requires no paid AI API; do not introduce one when local processing was requested.
 
 - Keep the ignored `wrangler.jsonc` and `private/` data while changing code versions. Apply new D1 migrations before using APIs that depend on them. Back up the D1 data before a schema upgrade.
 - Re-run imports for changed approved media. They compare local SHA-256 and remote metadata and reuse matching objects.

@@ -7,6 +7,7 @@ import { S3Client, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import { selectApprovedVideos } from './select-videos.mjs';
 import { mediaSpec } from './media.mjs';
+import { parseD1Rows, planCaptionUpdates, publishCaptionUpdates } from './captions.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const privateDir = join(root, 'private');
@@ -347,6 +348,43 @@ function doctor() {
   console.log('Cloudflare 登入：請執行 npx wrangler whoami 檢查。');
 }
 
+async function captions() {
+  const ids = must(flag('ids'), '--ids ID1,ID2');
+  if (hasFlag('limit') || hasFlag('all')) throw new Error('字幕更新請只用 --ids 明確選擇媒體');
+  const plan = planCaptionUpdates(loadManifest().videos, ids);
+  if (hasFlag('dry-run')) {
+    console.log(JSON.stringify(plan.map(({ id, sha256, cues, content }) => ({ id, sha256, cues, bytes: content.length })), null, 2));
+    return;
+  }
+  const config = JSON.parse(readFileSync(configPath, 'utf8'));
+  const bucket = must(config.r2_buckets?.find((binding) => binding.binding === 'MEDIA')?.bucket_name, 'MEDIA bucket');
+  const local = hasFlag('local');
+  process.env.WRANGLER_LOG_PATH ||= join(privateDir, 'wrangler-logs');
+  process.env.WRANGLER_SEND_METRICS ||= 'false';
+  mkdirSync(join(privateDir, 'captions'), { recursive: true });
+  const readRows = async (selected) => {
+    // Remote --file uses D1's SQL import endpoint, which does not return SELECT rows.
+    // IDs are validated before this query; pass SQL as one argument, never through a shell.
+    const sql = `SELECT id,published,media_key,bytes,duration_seconds,subtitle_key FROM videos WHERE id IN (${selected.map(escapeSql).join(',')});`;
+    const result = spawnSync('npx', ['wrangler', 'd1', 'execute', 'DB', local ? '--local' : '--remote', '--command', sql, '--json'], { cwd: root, encoding: 'utf8' });
+    if (result.error || result.status !== 0) throw new Error('D1 字幕預檢失敗；請確認 Wrangler 登入與設定');
+    return parseD1Rows(result.stdout);
+  };
+  const updated = await publishCaptionUpdates(plan, {
+    readRows,
+    async put(entry) {
+      const path = join(privateDir, 'captions', `upload-${randomBytes(8).toString('hex')}.vtt`);
+      writeFileSync(path, entry.content, { mode: 0o600 });
+      try { uploadWranglerFile(bucket, entry.key, path, local, 'text/vtt; charset=utf-8'); }
+      finally { unlinkSync(path); }
+    },
+    async writeSql(sql) { d1Sql(sql, local); },
+  });
+  const path = join(privateDir, 'captions', `receipt-${Date.now()}-${randomBytes(4).toString('hex')}.json`);
+  writeFileSync(path, JSON.stringify({ updated, local, verified_at: new Date().toISOString() }, null, 2) + '\n', { mode: 0o600 });
+  console.log(`已更新 ${updated.length} 份字幕；媒體、章節與觀看進度保留。私有收據：${relative(root, path)}`);
+}
+
 async function verify() {
   const url = must(flag('url'), '--url 站台網址').replace(/\/$/, '');
   const index = await fetch(url);
@@ -372,6 +410,7 @@ function help() {
   user-add --username family [--local]  產生高強度密碼並寫入 D1
   import [--ids ID1,ID2] [--limit 3] [--local] 上傳並發布；遠端預設使用 S3 multipart
   import --limit 3 --wrangler          小檔試播：沿用 Wrangler 登入上傳
+  captions --ids ID1,ID2 [--local]      只更新既有媒體字幕；--dry-run 可先檢查本機檔
   verify --url URL [--video-id ID]      驗證匿名無法讀取影片`);
 }
 
@@ -386,6 +425,7 @@ try {
     case 'estimate': estimate(); break;
     case 'user-add': userAdd(); break;
     case 'import': await importVideos(); break;
+    case 'captions': await captions(); break;
     case 'verify': await verify(); break;
     default: help();
   }

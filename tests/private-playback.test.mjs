@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createServer } from 'node:net';
 import { spawn, spawnSync } from 'node:child_process';
+import { planCaptionUpdates, publishCaptionUpdates } from '../cli/captions.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const wrangler = join(root, 'node_modules/wrangler/bin/wrangler.js');
@@ -15,6 +16,7 @@ const testEnv = { ...process.env, WRANGLER_LOG_PATH: join(tmpdir(), 'family-scre
 function run(params) {
   const result = spawnSync(process.execPath, [wrangler, ...params, '--config', testConfig], { cwd: root, env: testEnv, encoding: 'utf8', timeout: 45_000 });
   assert.equal(result.status, 0, `${params[0]} failed: ${(result.stderr || result.stdout).slice(-700)}`);
+  return result.stdout;
 }
 function freePort() {
   return new Promise((resolvePort, reject) => {
@@ -36,7 +38,7 @@ async function waitForServer(url, child) {
   throw new Error('Wrangler dev did not start within 25 seconds');
 }
 
-test('only an authenticated viewer can browse, seek, and resume a private video', { timeout: 90_000 }, async () => {
+test('only an authenticated viewer can browse, seek, and resume a private video', { timeout: 150_000 }, async () => {
   const directory = mkdtempSync(join(tmpdir(), 'family-screen-test-'));
   const state = join(directory, 'state');
   const sample = join(directory, 'sample.mp4');
@@ -148,6 +150,44 @@ test('only an authenticated viewer can browse, seek, and resume a private video'
     const again = await fetch(`${base}/api/login`, { method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:account,password}) });
     const saved = (await (await fetch(`${base}/api/catalog`,{headers:{Cookie:again.headers.get('set-cookie').split(';')[0]}})).json()).videos;
     assert.equal(saved.find((row) => row.id === audioId).position_seconds,17.5);
+    const originalAudio = Buffer.from(await (await fetch(`${base}/media/${audioId}.mp3`,{headers:auth})).arrayBuffer());
+    const captionFile = join(directory, 'updated.vtt');
+    writeFileSync(captionFile, 'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\n更新後的原創字幕\n');
+    const plan = planCaptionUpdates([{id:audioId,approved:true,subtitle_path:captionFile,
+      source_path:'/offline/recording.mp3',media_type:'audio',media_format:'mp3',bytes:1000,duration_seconds:45}],audioId);
+    const uploaded=[];
+    const queryRows = async (ids) => {
+      const sql=`SELECT id,published,media_key,bytes,duration_seconds,subtitle_key FROM videos WHERE id IN (${ids.map((id) => `'${id}'`).join(',')});`;
+      return JSON.parse(run(['d1','execute','DB','--local','--persist-to',state,'--command',sql,'--json'])).flatMap((row) => row.results);
+    };
+    await publishCaptionUpdates(plan, {
+      readRows:queryRows,
+      async put(entry) {
+        const path=join(directory,'snapshot.vtt');writeFileSync(path,entry.content);
+        uploaded.push(entry.key);
+        run(['r2','object','put',`family-screen-example-media/${entry.key}`,'--file',path,'--local','--persist-to',state]);
+      },
+      async writeSql(sql) {writeFileSync(sqlFile,sql);run(['d1','execute','DB','--local','--persist-to',state,'--file',sqlFile]);},
+    });
+    assert.equal(uploaded.length,1);assert.ok(uploaded.every((key) => key.startsWith('subtitles/')));
+    assert.match(await (await fetch(`${base}/subtitles/${audioId}.vtt`,{headers:auth})).text(),/更新後的原創字幕/);
+    assert.equal((await fetch(`${base}/subtitles/${audioId}.vtt`)).status,401);
+    assert.deepEqual(Buffer.from(await (await fetch(`${base}/media/${audioId}.mp3`,{headers:auth})).arrayBuffer()),originalAudio);
+    const afterCaption=(await (await fetch(`${base}/api/catalog`,{headers:auth})).json()).videos;
+    assert.equal(afterCaption.find((row) => row.id===audioId).position_seconds,17.5);
+    for(const item of saved) {
+      const after=afterCaption.find((row) => row.id===item.id);
+      for(const field of ['title','collection','bytes','sort_key','duration_seconds'])assert.equal(after[field],item[field]);
+    }
+    const previousKey=(await queryRows([audioId]))[0].subtitle_key;
+    const stalePlan=[{...plan[0],key:'subtitles/stale-candidate.vtt'}];
+    await assert.rejects(publishCaptionUpdates(stalePlan,{
+      readRows:queryRows,
+      async put() {writeFileSync(sqlFile,`UPDATE videos SET bytes=1001 WHERE id='${audioId}';`);run(['d1','execute','DB','--local','--persist-to',state,'--file',sqlFile]);},
+      async writeSql(sql) {writeFileSync(sqlFile,sql);run(['d1','execute','DB','--local','--persist-to',state,'--file',sqlFile]);},
+    }),/未通過核對/);
+    assert.equal((await queryRows([audioId]))[0].subtitle_key,previousKey);
+    writeFileSync(sqlFile,`UPDATE videos SET bytes=1000 WHERE id='${audioId}';`);run(['d1','execute','DB','--local','--persist-to',state,'--file',sqlFile]);
     const chapters = await fetch(`${base}/api/videos/${videoId}/chapters`, { headers: auth });
     assert.equal((await chapters.json()).chapters.length, 1);
     assert.equal((await fetch(`${base}/thumbnails/${videoId}.jpg`, { headers: auth })).status, 200);

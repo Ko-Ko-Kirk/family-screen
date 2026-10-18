@@ -1,7 +1,7 @@
 {
   "name": "family-screen",
   "version": "0.1.0",
-  "description": "A private, parent-curated video library for families",
+  "description": "A private video and audio library for families",
   "type": "module",
   "engines": {
     "node": ">=22"

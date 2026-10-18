@@ -1,12 +1,12 @@
-# Family Screen | A private video library for your family
+# Family Screen | A private video and audio library for your family
 
 **English** · [繁體中文](README.zh-TW.md)
 
 I wanted to organize the videos my family already has so children could choose what to watch and pick up where they left off, while grandparents could use a TV or computer. That should not require a public video channel or a transcoding server for a handful of viewers.
 
-Family Screen is a self-hosted family video library. Viewers can browse videos, jump to chapters, play the next episode, and resume from their own account's last position. The code can be public while your videos, thumbnails, catalog, and credentials stay in your own Cloudflare account and on your computer.
+Family Screen is a self-hosted family video and audio library. Viewers can browse videos, listen to audiobooks and podcasts, jump to chapters, play the next episode, and resume from their own account's last position. The code can be public while your media, subtitles, thumbnails, catalog, and credentials stay in your own Cloudflare account and on your computer.
 
-One Cloudflare Worker serves the website and API. D1 stores accounts, the catalog, and watch progress; a private R2 bucket stores MP4 files and thumbnails. The Worker serves byte ranges from R2, so the app does not need an HLS transcoding server. Test playback on the actual TV or streaming device you plan to use.
+One Cloudflare Worker serves the website and API. D1 stores accounts, the catalog, and playback progress; a private R2 bucket stores MP4, MP3, M4A, thumbnails, and captions. The Worker serves byte ranges from R2, so the app does not need an HLS transcoding server. Test playback on the actual TV or streaming device you plan to use.
 
 When mirroring an iPhone screen to a TV, use **TV Mirror Full View** below the player. This keeps playback inline and replaces Safari's native video controls with play, seek, skip, and exit buttons, so the native fullscreen button cannot switch playback away from screen mirroring. Tap the picture to reveal controls; they fade while playing. Rotate the phone to landscape for the largest picture. The mode stays active for the next video. Direct AirPlay remains available outside this mode.
 
@@ -179,3 +179,12 @@ Audio files use the same private login, byte-range delivery, collection queue, a
 After a background pause, iOS may route a headset's play button to another app. Test both Home Screen mode and Safari on the actual phone. The player keeps pause controls registered and refreshes them when playback starts or the page returns to the foreground. If playback switches apps, open the audio page's headset troubleshooting panel to resume this page or compare Safari. The panel can copy the last 60 playback events to distinguish missing remote commands from rejected playback. Events stay on the device, contain no credentials, media URLs, or content, and are never sent automatically. A webpage cannot force iOS to keep routing headset commands to it. See the [Media Session routing specification](https://w3c.github.io/mediasession/#routing) and [WebKit background-pause report](https://bugs.webkit.org/show_bug.cgi?id=243258).
 
 An optional `subtitle_path` in a catalog row points to a local UTF-8 WebVTT file under 1 MB. The import uploads it privately alongside the audio. The player displays plain-text Traditional Chinese cues and lets viewers hide them. Subtitle text is authenticated like the audio; it is never bundled into the static website. Approximate timing should be disclosed in the cues/source workflow; this player does not run or charge for transcription or alignment. Existing media IDs and playback progress survive the additive `0003_audio.sql` migration.
+
+To replace captions on existing media, set its `subtitle_path` in your private manifest, then run:
+
+```bash
+npm run cli -- captions --ids YOUR-MEDIA-ID --dry-run
+npm run cli -- captions --ids YOUR-MEDIA-ID
+```
+
+The command uses your existing Wrangler login and uploads only the selected VTT files. It checks every caption and the published media records before writing, then updates only their subtitle references. Audio, video, thumbnails, chapters, and account progress stay in place. Captions use content-addressed object keys; previous caption objects remain private. See [local caption alignment and repairs](docs/captions.md), including how to keep a separate record when narration omits part of a transcript. The workflow requires no paid AI API.
