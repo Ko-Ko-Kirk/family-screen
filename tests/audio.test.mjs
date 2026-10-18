@@ -5,6 +5,32 @@ import { mediaSpec } from '../cli/media.mjs';
 
 const { outputFiles } = await build({ entryPoints:[new URL('../src/playback.ts',import.meta.url).pathname],bundle:true,write:false,format:'esm' });
 const { collectionQueue, mediaPath, parseCaptions, resumeAudio } = await import(`data:text/javascript;base64,${Buffer.from(outputFiles[0].text).toString('base64')}`);
+const sessionBuild = await build({ entryPoints:[new URL('../src/media-session.ts',import.meta.url).pathname],bundle:true,write:false,format:'esm' });
+const { claimAudioPlayback, syncMediaSession } = await import(`data:text/javascript;base64,${Buffer.from(sessionBuild.outputFiles[0].text).toString('base64')}`);
+
+test('audio playback claims the OS session and preserves later changes by another audio feature', () => {
+  assert.doesNotThrow(() => claimAudioPlayback({})());
+  const target={audioSession:{type:'auto'}};
+  const release=claimAudioPlayback(target);
+  assert.equal(target.audioSession.type,'playback');
+  release();assert.equal(target.audioSession.type,'auto');
+  const releaseAfterCapture=claimAudioPlayback(target);
+  target.audioSession.type='play-and-record';
+  releaseAfterCapture();assert.equal(target.audioSession.type,'play-and-record');
+});
+
+test('OS playback controls receive native pause, speed and seek state without invalid positions', () => {
+  const positions=[];const target={mediaSession:{playbackState:'none',setPositionState:(value)=>positions.push(value)}};
+  const player={duration:100,currentTime:32,playbackRate:1.5,paused:false,ended:false};
+  syncMediaSession(target,player);
+  assert.equal(target.mediaSession.playbackState,'playing');
+  assert.deepEqual(positions.at(-1),{duration:100,position:32,playbackRate:1.5});
+  syncMediaSession(target,{...player,currentTime:101,paused:true});
+  assert.equal(target.mediaSession.playbackState,'paused');assert.equal(positions.at(-1).position,100);
+  syncMediaSession(target,{...player,duration:NaN});assert.equal(positions.length,2);
+  assert.doesNotThrow(()=>syncMediaSession({},player));
+  assert.doesNotThrow(()=>syncMediaSession({mediaSession:{setPositionState(){throw Error('unsupported');}}},player));
+});
 
 test('audiobook chapters sort numerically and never enter another collection', () => {
   const rows = ['100','2','10'].map((key) => ({id:`chapter-${key}`,collection:'Book',sort_key:key,media_type:'audio',media_format:'mp3'}));

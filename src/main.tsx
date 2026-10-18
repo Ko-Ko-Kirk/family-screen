@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import {
@@ -8,6 +8,7 @@ import {
 import './style.css';
 import { HomeScreenGuide } from './HomeScreenGuide';
 import { collectionQueue, mediaPath, parseCaptions, resumeAudio, type Caption, type Playable } from './playback';
+import { claimAudioPlayback, syncMediaSession } from './media-session';
 
 type Viewer = { id: number; username: string };
 type Video = Playable & {
@@ -122,6 +123,14 @@ function WatchPage({ video, videos, chapters, onBack, onNext, onSelect, onProgre
   const next = collection[collection.findIndex((item) => item.id === video.id) + 1];
   const activeCaption = captions.find((cue) => cue.start <= currentTime && currentTime < cue.end);
   useEffect(() => { lastSavedAt.current = 0; setAutoplayBlocked(false); setPlaybackError(false); if (audioOnly) setMirrorMode(false); }, [video.id]);
+  useLayoutEffect(() => {
+    if (audioOnly) return claimAudioPlayback(navigator);
+  }, [audioOnly]);
+  useLayoutEffect(() => {
+    // Preserve the same audio element and request playback before waiting for metadata.
+    // This also keeps a tap/ended/lock-screen next action in the playback call chain.
+    if (audioOnly) play();
+  }, [video.id, audioOnly]);
   useEffect(() => {
     const controller = new AbortController();
     setCaptions([]); setCaptionError(false);
@@ -152,15 +161,23 @@ function WatchPage({ video, videos, chapters, onBack, onNext, onSelect, onProgre
     const setHandler = (action: MediaSessionAction, handler: MediaSessionActionHandler | null) => {
       try { navigator.mediaSession.setActionHandler(action, handler); } catch { /* Optional device action. */ }
     };
-    setHandler('play', () => { void playerRef.current?.play().catch(() => setAutoplayBlocked(true)); });
+    setHandler('play', play);
     setHandler('pause', () => playerRef.current?.pause());
     setHandler('seekbackward', () => seekTo((playerRef.current?.currentTime || 0) - 15));
     setHandler('seekforward', () => seekTo((playerRef.current?.currentTime || 0) + 15));
-    setHandler('nexttrack', next ? onNext : null);
+    setHandler('seekto', (details) => { if (details.seekTime !== undefined) seekTo(details.seekTime); });
+    setHandler('nexttrack', next ? advance : null);
+    updateMediaSession();
     return () => {
-      for (const action of ['play','pause','seekbackward','seekforward','nexttrack'] as const) setHandler(action, null);
+      for (const action of ['play','pause','seekbackward','seekforward','seekto','nexttrack'] as const) setHandler(action, null);
     };
   }, [video.id, next?.id]);
+  useEffect(() => () => {
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.metadata = null;
+      navigator.mediaSession.playbackState = 'none';
+    }
+  }, []);
   useEffect(() => {
     if (!mirrorMode || paused || !mirrorControlsVisible) return;
     const timeout = window.setTimeout(() => setMirrorControlsVisible(false), 3500);
@@ -200,9 +217,24 @@ function WatchPage({ video, videos, chapters, onBack, onNext, onSelect, onProgre
       player.currentTime = video.position_seconds;
     }
     setCurrentTime(player.currentTime);
-    void player.play().catch(() => setAutoplayBlocked(true));
+    updateMediaSession();
+    play();
   }
-  function ended() { onProgress(video.id, video.duration_seconds); if (autoNext && next) onNext(); }
+  function play() {
+    const player = playerRef.current;
+    if (!player) return;
+    void player.play().catch((error: unknown) => {
+      // Changing a chapter can abort the previous element's pending play request.
+      if (error instanceof DOMException && error.name === 'AbortError') return;
+      if (player === playerRef.current && new URL(player.currentSrc || player.src, location.href).pathname === source)
+        setAutoplayBlocked(true);
+    });
+  }
+  function updateMediaSession() {
+    if (playerRef.current) syncMediaSession(navigator, playerRef.current);
+  }
+  function advance() { if (audioOnly) flushSync(onNext); else onNext(); }
+  function ended() { updateMediaSession(); onProgress(video.id, video.duration_seconds); if (autoNext && next) advance(); }
   function chapterJump(seconds: number) {
     if (playerRef.current) { playerRef.current.currentTime = seconds; void playerRef.current.play(); }
   }
@@ -219,7 +251,7 @@ function WatchPage({ video, videos, chapters, onBack, onNext, onSelect, onProgre
   function togglePlayback() {
     const player = playerRef.current;
     if (!player) return;
-    if (player.paused) void player.play().catch(() => setAutoplayBlocked(true));
+    if (player.paused) play();
     else player.pause();
     revealMirrorControls();
   }
@@ -228,6 +260,7 @@ function WatchPage({ video, videos, chapters, onBack, onNext, onSelect, onProgre
     if (!player || !Number.isFinite(seconds)) return;
     player.currentTime = Math.max(0, Math.min(seconds, Number.isFinite(player.duration) ? player.duration : video.duration_seconds));
     setCurrentTime(player.currentTime);
+    updateMediaSession();
     revealMirrorControls();
   }
   return <main className="watch-layout">
@@ -236,12 +269,12 @@ function WatchPage({ video, videos, chapters, onBack, onNext, onSelect, onProgre
       <div className={`player-wrap${audioOnly ? ' audio-player' : ''}${mirrorMode ? ' mirror-mode' : ''}`}>
         {audioOnly && <div className="audio-art"><Headphones size={54} /><span>{video.topics.includes('AI 合成語音') ? '有聲書 · AI 合成語音' : '音訊播放'}</span><strong>{video.title}</strong></div>}
         {React.createElement(audioOnly ? 'audio' : 'video', {
-          ref: playerRef, controls: !mirrorMode, playsInline: true, preload: 'metadata',
+          ref: playerRef, controls: !mirrorMode, playsInline: true, preload: 'metadata', autoPlay: audioOnly,
           poster: audioOnly ? undefined : `/thumbnails/${video.id}.jpg`, src: source, onLoadedMetadata: loaded,
-          onTimeUpdate: (event: React.SyntheticEvent<HTMLMediaElement>) => { setCurrentTime(event.currentTarget.currentTime); save(); },
-          onPlay: () => { setPaused(false); setAutoplayBlocked(false); },
-          onPause: () => { setPaused(true); save(true); },
-          onSeeked: () => save(true), onEnded: ended, onError: () => setPlaybackError(true),
+          onTimeUpdate: (event: React.SyntheticEvent<HTMLMediaElement>) => { setCurrentTime(event.currentTarget.currentTime); updateMediaSession(); save(); },
+          onPlay: () => { setPaused(false); setAutoplayBlocked(false); updateMediaSession(); },
+          onPause: () => { setPaused(true); updateMediaSession(); save(true); },
+          onRateChange: updateMediaSession, onSeeked: () => { updateMediaSession(); save(true); }, onEnded: ended, onError: () => setPlaybackError(true),
         })}
         {autoplayBlocked && !playbackError && <button className="player-overlay" onClick={() => { void playerRef.current?.play().then(() => setAutoplayBlocked(false)).catch(() => setAutoplayBlocked(true)); }}><CirclePlay size={54} /> 點擊播放</button>}
         {playbackError && <div className="player-message">媒體暫時無法播放，請檢查網路或稍後再試。</div>}
@@ -263,7 +296,7 @@ function WatchPage({ video, videos, chapters, onBack, onNext, onSelect, onProgre
       </div>
       {!mirrorMode && !audioOnly && <div className="player-actions"><button className="mirror-start" type="button" onClick={enterMirrorMode}><Tv size={18} /> 電視鏡像全畫面</button><span>鏡像輸出時按此播放；若要隱藏 Safari 工具列，請從分享選單加入主畫面，再由主畫面圖示開啟。</span></div>}
       {audioOnly && <div className="audio-actions"><button className="next-button" onClick={() => seekTo(currentTime - 15)}>倒退 15 秒</button><button className="next-button" onClick={() => seekTo(currentTime + 15)}>快轉 15 秒</button><label>播放速度 <select aria-label="播放速度" value={playbackRate} onChange={(event) => { const rate = Number(event.target.value); setPlaybackRate(rate); if (playerRef.current) playerRef.current.playbackRate = rate; }}>{[0.75,1,1.25,1.5,2].map((rate) => <option key={rate} value={rate}>{rate}×</option>)}</select></label></div>}
-      {video.has_subtitles ? <section className="reader-captions" aria-label="字幕與跟讀文字"><button className="next-button" aria-pressed={captionsVisible} onClick={() => setCaptionsVisible(!captionsVisible)}>{captionsVisible ? '隱藏字幕' : '顯示字幕'}</button><small>正體中文 · {video.topics.includes('字幕時間估算') ? '分段時間為估算' : '跟讀字幕'}</small>{captionsVisible && <p>{captionError ? '字幕暫時無法載入，不影響音訊播放。' : activeCaption?.text || (captions.length ? (currentTime === 0 && paused ? '播放時顯示跟讀文字' : '\u00a0') : '載入字幕中…')}</p>}</section> : null}
+      {video.has_subtitles ? <section className="reader-captions" aria-label="字幕與跟讀文字"><button className="next-button" aria-pressed={captionsVisible} onClick={() => setCaptionsVisible(!captionsVisible)}>{captionsVisible ? '隱藏字幕' : '顯示字幕'}</button><small>正體中文 · {video.topics.includes('字幕時間估算') ? '分段時間為估算' : '跟讀字幕'}</small>{captionsVisible && <p>{captionError ? '字幕暫時無法載入，不影響音訊播放。' : activeCaption?.text || (captions.length ? (currentTime === 0 && paused ? '播放時顯示跟讀文字' : '\u00a0') : '載入字幕中…')}</p>}</section> : audioOnly ? <section className="reader-captions" aria-label="字幕狀態"><small>本章尚無字幕，仍可正常收聽。</small></section> : null}
       <div className="watch-heading"><div><span className="eyebrow">{video.collection}{video.period ? ` · ${video.period}` : ''}</span><h1>{video.title}</h1></div>{next && <button className="next-button" onClick={onNext}>下一集 <SkipForward size={17} /></button>}</div>
       <div className="watch-meta"><span><Clock3 size={15} /> {formatDuration(video.duration_seconds)}</span><span>{video.topics.slice(0, 3).join(' · ')}</span></div>
       {chapters.length > 0 && <section className="chapters"><h2>影片章節 <small>{chapters.length} 段</small></h2><div className="chapter-list">{chapters.map((chapter, index) => <button key={`${index}-${chapter.start_seconds}`} onClick={() => chapterJump(chapter.start_seconds)}><span>{String(index + 1).padStart(2, '0')}</span><strong>{chapter.title}</strong><small>{formatDuration(chapter.start_seconds)}</small></button>)}</div></section>}
