@@ -8,7 +8,8 @@ import {
 import './style.css';
 import { HomeScreenGuide } from './HomeScreenGuide';
 import { collectionQueue, mediaPath, parseCaptions, resumeAudio, type Caption, type Playable } from './playback';
-import { claimAudioPlayback, syncMediaSession } from './media-session';
+import { claimAudioPlayback, ensureAudioPlayback, setMediaSessionActions, syncMediaSession } from './media-session';
+import { createPlaybackDiagnostics } from './playback-diagnostics';
 
 type Viewer = { id: number; username: string };
 type Video = Playable & {
@@ -117,6 +118,11 @@ function WatchPage({ video, videos, chapters, onBack, onNext, onSelect, onProgre
   const [captions, setCaptions] = useState<Caption[]>([]);
   const [captionsVisible, setCaptionsVisible] = useState(true);
   const [captionError, setCaptionError] = useState(false);
+  const [diagnosticText, setDiagnosticText] = useState('');
+  const [diagnosticCopied, setDiagnosticCopied] = useState(false);
+  const [diagnostics] = useState(() => {
+    try { return createPlaybackDiagnostics(localStorage); } catch { return createPlaybackDiagnostics(); }
+  });
   const audioOnly = video.media_type === 'audio';
   const source = mediaPath(video);
   const collection = collectionQueue(videos, video);
@@ -126,6 +132,7 @@ function WatchPage({ video, videos, chapters, onBack, onNext, onSelect, onProgre
   useLayoutEffect(() => {
     if (audioOnly) return claimAudioPlayback(navigator);
   }, [audioOnly]);
+  useLayoutEffect(() => { refreshMediaControls(); }, [video.id, next?.id]);
   useLayoutEffect(() => {
     // Preserve the same audio element and request playback before waiting for metadata.
     // This also keeps a tap/ended/lock-screen next action in the playback call chain.
@@ -145,34 +152,27 @@ function WatchPage({ video, videos, chapters, onBack, onNext, onSelect, onProgre
   }, [video.id, video.has_subtitles]);
   useEffect(() => {
     const persist = () => save(true);
-    const hidden = () => { if (document.visibilityState === 'hidden') persist(); };
-    window.addEventListener('pagehide', persist);
+    const visibility = () => {
+      trace(document.visibilityState === 'hidden' ? 'page:hidden' : 'page:visible');
+      if (document.visibilityState === 'hidden') persist();
+      else refreshMediaControls(); // Restore controls without resuming a user's pause.
+    };
+    const shown = () => { trace('page:show'); refreshMediaControls(); };
+    const hidden = () => { trace('page:hide'); persist(); };
+    window.addEventListener('pagehide', hidden);
+    window.addEventListener('pageshow', shown);
     window.addEventListener('family-screen-save', persist);
-    document.addEventListener('visibilitychange', hidden);
+    document.addEventListener('visibilitychange', visibility);
     return () => {
-      window.removeEventListener('pagehide', persist);
+      window.removeEventListener('pagehide', hidden);
+      window.removeEventListener('pageshow', shown);
       window.removeEventListener('family-screen-save', persist);
-      document.removeEventListener('visibilitychange', hidden);
+      document.removeEventListener('visibilitychange', visibility);
     };
   }, [video.id]);
-  useEffect(() => {
-    if (!('mediaSession' in navigator) || typeof MediaMetadata === 'undefined') return;
-    navigator.mediaSession.metadata = new MediaMetadata({ title: video.title, album: video.collection });
-    const setHandler = (action: MediaSessionAction, handler: MediaSessionActionHandler | null) => {
-      try { navigator.mediaSession.setActionHandler(action, handler); } catch { /* Optional device action. */ }
-    };
-    setHandler('play', play);
-    setHandler('pause', () => playerRef.current?.pause());
-    setHandler('seekbackward', () => seekTo((playerRef.current?.currentTime || 0) - 15));
-    setHandler('seekforward', () => seekTo((playerRef.current?.currentTime || 0) + 15));
-    setHandler('seekto', (details) => { if (details.seekTime !== undefined) seekTo(details.seekTime); });
-    setHandler('nexttrack', next ? advance : null);
-    updateMediaSession();
-    return () => {
-      for (const action of ['play','pause','seekbackward','seekforward','seekto','nexttrack'] as const) setHandler(action, null);
-    };
-  }, [video.id, next?.id]);
   useEffect(() => () => {
+    trace('session:release');
+    setMediaSessionActions(navigator, {});
     if ('mediaSession' in navigator) {
       navigator.mediaSession.metadata = null;
       navigator.mediaSession.playbackState = 'none';
@@ -223,7 +223,10 @@ function WatchPage({ video, videos, chapters, onBack, onNext, onSelect, onProgre
   function play() {
     const player = playerRef.current;
     if (!player) return;
-    void player.play().catch((error: unknown) => {
+    if (audioOnly) ensureAudioPlayback(navigator);
+    trace('play:request');
+    void player.play().then(() => trace('play:resolved')).catch((error: unknown) => {
+      trace('play:rejected', error);
       // Changing a chapter can abort the previous element's pending play request.
       if (error instanceof DOMException && error.name === 'AbortError') return;
       if (player === playerRef.current && new URL(player.currentSrc || player.src, location.href).pathname === source)
@@ -233,8 +236,40 @@ function WatchPage({ video, videos, chapters, onBack, onNext, onSelect, onProgre
   function updateMediaSession() {
     if (playerRef.current) syncMediaSession(navigator, playerRef.current);
   }
+  function trace(event: Parameters<typeof diagnostics.record>[0], error?: unknown) {
+    if (!audioOnly) return;
+    const player = playerRef.current;
+    const audioSession = (navigator as Navigator & { audioSession?: { state?: string } }).audioSession;
+    const errorName = error instanceof Error ? error.name : undefined;
+    diagnostics.record(event, { visible: document.visibilityState === 'visible',
+      standalone: matchMedia('(display-mode: standalone)').matches || Boolean((navigator as Navigator & { standalone?: boolean }).standalone),
+      paused: player?.paused, ended: player?.ended, position: player?.currentTime, ready: player?.readyState,
+      session: navigator.mediaSession?.playbackState, audioState: audioSession?.state,
+      error: errorName && ['AbortError','NotAllowedError','NotSupportedError','NetworkError'].includes(errorName) ? errorName : error ? 'OtherError' : undefined });
+  }
+  function refreshMediaControls() {
+    if (!('mediaSession' in navigator)) return;
+    // Action handlers must still work if metadata is unsupported. Never clear them on pause.
+    if (typeof MediaMetadata !== 'undefined') {
+      try { navigator.mediaSession.metadata = new MediaMetadata({ title: video.title, album: video.collection }); } catch { /* Optional metadata. */ }
+    }
+    setMediaSessionActions(navigator, {
+      play: () => { trace('remote:play'); play(); },
+      pause: () => { trace('remote:pause'); playerRef.current?.pause(); updateMediaSession(); },
+      seekbackward: () => { trace('remote:seek'); seekTo((playerRef.current?.currentTime || 0) - 15); },
+      seekforward: () => { trace('remote:seek'); seekTo((playerRef.current?.currentTime || 0) + 15); },
+      seekto: (details) => { trace('remote:seek'); if (details.seekTime !== undefined) seekTo(details.seekTime); },
+      nexttrack: next ? () => { trace('remote:next'); advance(); } : undefined,
+    });
+    updateMediaSession();
+    trace('session:bind');
+  }
+  async function copyDiagnostics() {
+    const text = diagnostics.export(); setDiagnosticText(text); setDiagnosticCopied(false);
+    try { await navigator.clipboard.writeText(text); setDiagnosticCopied(true); } catch { /* The visible text can be copied manually. */ }
+  }
   function advance() { if (audioOnly) flushSync(onNext); else onNext(); }
-  function ended() { updateMediaSession(); onProgress(video.id, video.duration_seconds); if (autoNext && next) advance(); }
+  function ended() { trace('media:ended'); updateMediaSession(); onProgress(video.id, video.duration_seconds); if (autoNext && next) advance(); }
   function chapterJump(seconds: number) {
     if (playerRef.current) { playerRef.current.currentTime = seconds; void playerRef.current.play(); }
   }
@@ -272,9 +307,11 @@ function WatchPage({ video, videos, chapters, onBack, onNext, onSelect, onProgre
           ref: playerRef, controls: !mirrorMode, playsInline: true, preload: 'metadata', autoPlay: audioOnly,
           poster: audioOnly ? undefined : `/thumbnails/${video.id}.jpg`, src: source, onLoadedMetadata: loaded,
           onTimeUpdate: (event: React.SyntheticEvent<HTMLMediaElement>) => { setCurrentTime(event.currentTarget.currentTime); updateMediaSession(); save(); },
-          onPlay: () => { setPaused(false); setAutoplayBlocked(false); updateMediaSession(); },
-          onPause: () => { setPaused(true); updateMediaSession(); save(true); },
-          onRateChange: updateMediaSession, onSeeked: () => { updateMediaSession(); save(true); }, onEnded: ended, onError: () => setPlaybackError(true),
+          onPlay: () => { setPaused(false); setAutoplayBlocked(false); updateMediaSession(); trace('media:play'); },
+          onPlaying: () => { refreshMediaControls(); trace('media:playing'); },
+          onPause: () => { setPaused(true); updateMediaSession(); trace('media:pause'); save(true); },
+          onDurationChange: updateMediaSession,
+          onRateChange: updateMediaSession, onSeeked: () => { updateMediaSession(); save(true); }, onEnded: ended, onError: () => { trace('media:error'); setPlaybackError(true); },
         })}
         {autoplayBlocked && !playbackError && <button className="player-overlay" onClick={() => { void playerRef.current?.play().then(() => setAutoplayBlocked(false)).catch(() => setAutoplayBlocked(true)); }}><CirclePlay size={54} /> 點擊播放</button>}
         {playbackError && <div className="player-message">媒體暫時無法播放，請檢查網路或稍後再試。</div>}
@@ -296,6 +333,7 @@ function WatchPage({ video, videos, chapters, onBack, onNext, onSelect, onProgre
       </div>
       {!mirrorMode && !audioOnly && <div className="player-actions"><button className="mirror-start" type="button" onClick={enterMirrorMode}><Tv size={18} /> 電視鏡像全畫面</button><span>鏡像輸出時按此播放；若要隱藏 Safari 工具列，請從分享選單加入主畫面，再由主畫面圖示開啟。</span></div>}
       {audioOnly && <div className="audio-actions"><button className="next-button" onClick={() => seekTo(currentTime - 15)}>倒退 15 秒</button><button className="next-button" onClick={() => seekTo(currentTime + 15)}>快轉 15 秒</button><label>播放速度 <select aria-label="播放速度" value={playbackRate} onChange={(event) => { const rate = Number(event.target.value); setPlaybackRate(rate); if (playerRef.current) playerRef.current.playbackRate = rate; }}>{[0.75,1,1.25,1.5,2].map((rate) => <option key={rate} value={rate}>{rate}×</option>)}</select></label></div>}
+      {audioOnly && <details className="playback-help"><summary>耳機播放疑難排解</summary><p>若耳機恢復播放時跳到其他 App，請回到本頁點播放。也可用 Safari 開啟同一網站比較。iPhone 暫停後可能將播放控制交給其他 App。</p><button className="next-button" onClick={() => { refreshMediaControls(); play(); }}>恢復本頁播放</button><button className="next-button" onClick={() => void copyDiagnostics()}>{diagnosticCopied ? '已複製播放診斷' : '複製播放診斷'}</button><small>只記錄本機播放事件，不含帳密、媒體網址或內容；不會自動傳送。</small>{diagnosticText && <textarea aria-label="播放診斷紀錄" readOnly value={diagnosticText} />}</details>}
       {video.has_subtitles ? <section className="reader-captions" aria-label="字幕與跟讀文字"><button className="next-button" aria-pressed={captionsVisible} onClick={() => setCaptionsVisible(!captionsVisible)}>{captionsVisible ? '隱藏字幕' : '顯示字幕'}</button><small>正體中文 · {video.topics.includes('字幕時間估算') ? '分段時間為估算' : '跟讀字幕'}</small>{captionsVisible && <p>{captionError ? '字幕暫時無法載入，不影響音訊播放。' : activeCaption?.text || (captions.length ? (currentTime === 0 && paused ? '播放時顯示跟讀文字' : '\u00a0') : '載入字幕中…')}</p>}</section> : audioOnly ? <section className="reader-captions" aria-label="字幕狀態"><small>本章尚無字幕，仍可正常收聽。</small></section> : null}
       <div className="watch-heading"><div><span className="eyebrow">{video.collection}{video.period ? ` · ${video.period}` : ''}</span><h1>{video.title}</h1></div>{next && <button className="next-button" onClick={onNext}>下一集 <SkipForward size={17} /></button>}</div>
       <div className="watch-meta"><span><Clock3 size={15} /> {formatDuration(video.duration_seconds)}</span><span>{video.topics.slice(0, 3).join(' · ')}</span></div>

@@ -6,7 +6,43 @@ import { mediaSpec } from '../cli/media.mjs';
 const { outputFiles } = await build({ entryPoints:[new URL('../src/playback.ts',import.meta.url).pathname],bundle:true,write:false,format:'esm' });
 const { collectionQueue, mediaPath, parseCaptions, resumeAudio } = await import(`data:text/javascript;base64,${Buffer.from(outputFiles[0].text).toString('base64')}`);
 const sessionBuild = await build({ entryPoints:[new URL('../src/media-session.ts',import.meta.url).pathname],bundle:true,write:false,format:'esm' });
-const { claimAudioPlayback, syncMediaSession } = await import(`data:text/javascript;base64,${Buffer.from(sessionBuild.outputFiles[0].text).toString('base64')}`);
+const { claimAudioPlayback, ensureAudioPlayback, setMediaSessionActions, syncMediaSession } = await import(`data:text/javascript;base64,${Buffer.from(sessionBuild.outputFiles[0].text).toString('base64')}`);
+const diagnosticsBuild = await build({ entryPoints:[new URL('../src/playback-diagnostics.ts',import.meta.url).pathname],bundle:true,write:false,format:'esm' });
+const { createPlaybackDiagnostics } = await import(`data:text/javascript;base64,${Buffer.from(diagnosticsBuild.outputFiles[0].text).toString('base64')}`);
+
+test('remote pause and resume retain handlers, and chapter updates replace them without clearing play', () => {
+  const handlers=new Map();const calls=[];
+  const target={audioSession:{type:'auto'},mediaSession:{setActionHandler(action,handler){
+    calls.push([action,handler]);
+    if(action==='seekto')throw Error('unsupported');
+    handlers.set(action,handler);
+  }}};
+  let paused=false;let chapter='one';const played=[];
+  const actions=(id)=>({play(){ensureAudioPlayback(target);paused=false;played.push(id);},pause(){paused=true;}});
+  setMediaSessionActions(target,actions(chapter));
+  handlers.get('pause')();assert.equal(paused,true);
+  handlers.get('play')();assert.equal(paused,false);assert.equal(target.audioSession.type,'playback');
+  chapter='two';setMediaSessionActions(target,actions(chapter));handlers.get('play')();
+  assert.deepEqual(played,['one','two']);
+  assert.ok(calls.filter(([action])=>action==='play').every(([,handler])=>typeof handler==='function'));
+  setMediaSessionActions(target,{});assert.equal(handlers.get('play'),null);
+  assert.doesNotThrow(()=>setMediaSessionActions({},actions('none')));
+});
+
+test('playback diagnostics persist bounded events without content, credentials or arbitrary error messages', () => {
+  let stored=null;
+  const storage={getItem(){return stored;},setItem(_key,value){stored=value;}};
+  const trace=createPlaybackDiagnostics(storage);
+  for(let i=0;i<80;i++)trace.record('media:pause',{paused:true,position:i,session:'paused',url:'https://private.invalid',password:'SECRET',title:'PRIVATE TITLE',error:'SECRET'});
+  const restored=JSON.parse(createPlaybackDiagnostics(storage).export());
+  assert.equal(restored.entries.length,60);assert.equal(restored.entries[0].position,20);
+  assert.ok(!stored.includes('SECRET'));assert.ok(!stored.includes('private.invalid'));assert.ok(!stored.includes('PRIVATE TITLE'));
+  trace.record('play:rejected',{error:'NotAllowedError',position:NaN});
+  assert.equal(JSON.parse(trace.export()).entries.at(-1).error,'NotAllowedError');
+  assert.ok(!('position' in JSON.parse(trace.export()).entries.at(-1)));
+  const blocked=createPlaybackDiagnostics({getItem(){throw Error('blocked');},setItem(){throw Error('blocked');}});
+  assert.doesNotThrow(()=>blocked.record('remote:play',{paused:true}));
+});
 
 test('audio playback claims the OS session and preserves later changes by another audio feature', () => {
   assert.doesNotThrow(() => claimAudioPlayback({})());
