@@ -302,7 +302,11 @@ function WatchPage({ video, videos, chapters, onBack, onNext, onSelect, onProgre
     <div className="watch-main">
       <button className="back-link" onClick={onBack}><ArrowLeft size={18} /> 返回片庫</button>
       <div className={`player-wrap${audioOnly ? ' audio-player' : ''}${mirrorMode ? ' mirror-mode' : ''}`}>
-        {audioOnly && <div className="audio-art"><Headphones size={54} /><span>{video.topics.includes('AI 合成語音') ? '有聲書 · AI 合成語音' : '音訊播放'}</span><strong>{video.title}</strong></div>}
+        {audioOnly && <button className="audio-art" type="button" onClick={togglePlayback} aria-label={paused ? '播放音訊' : '暫停音訊'}>
+          <span className="audio-art-kind"><Headphones size={18} />{video.topics.includes('AI 合成語音') ? '有聲書 · AI 合成語音' : '音訊播放'}</span>
+          <span className="audio-art-control" aria-hidden="true">{paused ? <Play size={34} fill="currentColor" /> : <Pause size={34} fill="currentColor" />}</span>
+          <strong>{video.title}</strong><span className="audio-art-hint">{paused ? '點一下播放' : '點一下暫停'}</span>
+        </button>}
         {React.createElement(audioOnly ? 'audio' : 'video', {
           ref: playerRef, controls: !mirrorMode, playsInline: true, preload: 'metadata', autoPlay: audioOnly,
           poster: audioOnly ? undefined : `/thumbnails/${video.id}.jpg`, src: source, onLoadedMetadata: loaded,
@@ -313,7 +317,7 @@ function WatchPage({ video, videos, chapters, onBack, onNext, onSelect, onProgre
           onDurationChange: updateMediaSession,
           onRateChange: updateMediaSession, onSeeked: () => { updateMediaSession(); save(true); }, onEnded: ended, onError: () => { trace('media:error'); setPlaybackError(true); },
         })}
-        {autoplayBlocked && !playbackError && <button className="player-overlay" onClick={() => { void playerRef.current?.play().then(() => setAutoplayBlocked(false)).catch(() => setAutoplayBlocked(true)); }}><CirclePlay size={54} /> 點擊播放</button>}
+        {autoplayBlocked && !audioOnly && !playbackError && <button className="player-overlay" onClick={() => { void playerRef.current?.play().then(() => setAutoplayBlocked(false)).catch(() => setAutoplayBlocked(true)); }}><CirclePlay size={54} /> 點擊播放</button>}
         {playbackError && <div className="player-message">媒體暫時無法播放，請檢查網路或稍後再試。</div>}
         {mirrorMode && <>
           <button className="mirror-tap" type="button" onClick={revealMirrorControls} aria-label="顯示播放控制" />
@@ -353,8 +357,27 @@ function App() {
   const [collection, setCollection] = useState('全部');
   const [query, setQuery] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [narrowScreen, setNarrowScreen] = useState(() => matchMedia('(max-width: 680px)').matches);
+  const menuRef = useRef<HTMLButtonElement>(null);
+  const sidebarVisible = narrowScreen ? sidebarOpen : !sidebarCollapsed;
   const [error, setError] = useState('');
   const progressRequests = useRef(new Map<string, Promise<void>>());
+
+  useEffect(() => {
+    const screen = matchMedia('(max-width: 680px)');
+    const resize = () => { setNarrowScreen(screen.matches); setSidebarOpen(false); };
+    screen.addEventListener('change', resize);
+    return () => screen.removeEventListener('change', resize);
+  }, []);
+  useEffect(() => {
+    if (!narrowScreen || !sidebarOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { setSidebarOpen(false); menuRef.current?.focus(); }
+    };
+    document.addEventListener('keydown', closeOnEscape);
+    return () => document.removeEventListener('keydown', closeOnEscape);
+  }, [narrowScreen, sidebarOpen]);
 
   async function loadCatalog() {
     try {
@@ -420,10 +443,11 @@ function App() {
 
   if (loading) return <div className="loading-screen"><span className="brand-mark"><Play size={20} fill="currentColor" /></span><span>正在打開家庭片庫…</span></div>;
   if (!viewer) return <Login onLogin={(me) => { setViewer(me); void loadCatalog(); }} />;
-  return <div className="app-shell">
-    <header className="topbar"><div className="top-left"><button className="icon-button menu-button" aria-label="開啟選單" onClick={() => setSidebarOpen(!sidebarOpen)}><Menu size={21} /></button><button className="brand" onClick={() => navigate('home')}><span className="brand-mark"><Play size={16} fill="currentColor" /></span><span>family<span className="brand-accent">screen</span></span></button>{DEMO_MODE && <span className="demo-pill">SYNTHETIC DEMO</span>}</div><label className="search-box"><Search size={20} /><input value={query} onChange={(event) => { setQuery(event.target.value); if (selectedId) back(); }} placeholder="搜尋影音、主題或月份" aria-label="搜尋影音" />{query && <button aria-label="清除搜尋" onClick={() => setQuery('')}><X size={17} /></button>}</label><div className="account"><span className="account-avatar">{viewer.username.slice(0, 1).toUpperCase()}</span><span className="account-name">{viewer.username}</span>{!DEMO_MODE && <button className="icon-button" onClick={() => void logout()} title="登出" aria-label="登出"><LogOut size={19} /></button>}</div></header>
-    <aside className={`sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}><div className="nav-group"><button className={tab === 'home' && !selected ? 'active' : ''} onClick={() => navigate('home')}><House size={20} />首頁</button><button className={tab === 'continue' && !selected ? 'active' : ''} onClick={() => navigate('continue')}><Clock3 size={20} />繼續觀看</button></div><div className="nav-divider" /><div className="nav-label">你的片庫</div><div className="nav-group"><button onClick={() => navigate('home', '全部')}><ListVideo size={20} />所有影音</button>{collections.slice(1).map((name) => <button key={name} className={collection === name && !selected ? 'active' : ''} onClick={() => navigate('collection', name)}><span className="nav-dot" />{name}</button>)}</div><div className="sidebar-bottom">{DEMO_MODE ? '本機示範：片單與影片皆為虛構。' : '由家人用心挑選的每一集。'}</div></aside>
-    <div className="content-area">{selected ? <WatchPage video={selected} videos={videos} chapters={chapters} onBack={back} onNext={next} onSelect={openVideo} onProgress={(id, position) => void saveProgress(id, position)} /> : <main className="library">
+  return <div className={`app-shell${sidebarVisible ? '' : ' sidebar-collapsed'}`}>
+    <header className="topbar"><div className="top-left"><button ref={menuRef} className="icon-button menu-button" type="button" aria-label={sidebarVisible ? '收合側欄' : '展開側欄'} aria-expanded={sidebarVisible} aria-controls="library-sidebar" onClick={() => narrowScreen ? setSidebarOpen(!sidebarOpen) : setSidebarCollapsed(!sidebarCollapsed)}><Menu size={23} /></button><button className="brand" onClick={() => navigate('home')}><span className="brand-mark"><Play size={16} fill="currentColor" /></span><span>family<span className="brand-accent">screen</span></span></button>{DEMO_MODE && <span className="demo-pill">SYNTHETIC DEMO</span>}</div><label className="search-box"><Search size={20} /><input value={query} onChange={(event) => { setQuery(event.target.value); if (selectedId) back(); }} placeholder="搜尋影音、主題或月份" aria-label="搜尋影音" />{query && <button aria-label="清除搜尋" onClick={() => setQuery('')}><X size={17} /></button>}</label><div className="account"><span className="account-avatar">{viewer.username.slice(0, 1).toUpperCase()}</span><span className="account-name">{viewer.username}</span>{!DEMO_MODE && <button className="icon-button" onClick={() => void logout()} title="登出" aria-label="登出"><LogOut size={19} /></button>}</div></header>
+    <aside id="library-sidebar" className={`sidebar ${sidebarOpen ? 'sidebar-open' : ''}`} aria-label="片庫選單" hidden={!sidebarVisible}><div className="nav-group"><button className={tab === 'home' && !selected ? 'active' : ''} onClick={() => navigate('home')}><House size={20} />首頁</button><button className={tab === 'continue' && !selected ? 'active' : ''} onClick={() => navigate('continue')}><Clock3 size={20} />繼續觀看</button></div><div className="nav-divider" /><div className="nav-label">你的片庫</div><div className="nav-group"><button onClick={() => navigate('home', '全部')}><ListVideo size={20} />所有影音</button>{collections.slice(1).map((name) => <button key={name} className={collection === name && !selected ? 'active' : ''} onClick={() => navigate('collection', name)}><span className="nav-dot" />{name}</button>)}</div><div className="sidebar-bottom">{DEMO_MODE ? '本機示範：片單與影片皆為虛構。' : '由家人用心挑選的每一集。'}</div></aside>
+    {narrowScreen && sidebarOpen && <button className="sidebar-backdrop" type="button" aria-label="關閉側欄" onClick={() => { setSidebarOpen(false); menuRef.current?.focus(); }} />}
+    <div className="content-area" inert={narrowScreen && sidebarOpen} aria-hidden={narrowScreen && sidebarOpen ? true : undefined}>{selected ? <WatchPage video={selected} videos={videos} chapters={chapters} onBack={back} onNext={next} onSelect={openVideo} onProgress={(id, position) => void saveProgress(id, position)} /> : <main className="library">
       <HomeScreenGuide placement="library" />
       {audioResume && !query && <div className="audio-resume"><Headphones size={23} /><div><strong>接續上次收聽</strong><p>{audioResume.collection} · {audioResume.title}</p></div><button className="next-button" onClick={() => openVideo(audioResume)}>繼續收聽 <Play size={17} /></button></div>}
       {tab === 'home' && !query && resume.length > 0 && <section className="resume-section"><div className="section-head"><div><span className="eyebrow">PICK UP WHERE YOU LEFT OFF</span><h2>繼續觀看</h2></div><button className="text-link" onClick={() => navigate('continue')}>查看全部 <ChevronRight size={16} /></button></div><div className="video-grid resume-grid">{resume.map((video) => <VideoCard key={video.id} video={video} onSelect={() => openVideo(video)} />)}</div></section>}

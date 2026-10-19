@@ -174,6 +174,8 @@ Video imports currently run through the skill and local tools. The website has n
 
 ## Audiobooks and podcasts
 
+The menu button opens or collapses the library sidebar on desktop and phone. Tap the large audio artwork to play or pause; the timeline remains a separate control for seeking. Audio skip, speed, and next-episode controls have larger touch targets.
+
 Audio files use the same private login, byte-range delivery, collection queue, and per-account progress as videos. Import MP3 or AAC M4A through the skill/CLI. The audio view includes 15-second skip buttons, playback speed, and a continue-listening shortcut that remembers both the chapter and position. Chapter order follows `sort_key`; use padded numbers such as `0305`, `0306`. Automatic next playback stays in the same collection. A browser may require an initial tap, and background/lock-screen behavior should be checked on your phone.
 
 After a background pause, iOS may route a headset's play button to another app. Test both Home Screen mode and Safari on the actual phone. The player keeps pause controls registered and refreshes them when playback starts or the page returns to the foreground. If playback switches apps, open the audio page's headset troubleshooting panel to resume this page or compare Safari. The panel can copy the last 60 playback events to distinguish missing remote commands from rejected playback. Events stay on the device, contain no credentials, media URLs, or content, and are never sent automatically. A webpage cannot force iOS to keep routing headset commands to it. See the [Media Session routing specification](https://w3c.github.io/mediasession/#routing) and [WebKit background-pause report](https://bugs.webkit.org/show_bug.cgi?id=243258).
