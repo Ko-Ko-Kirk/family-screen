@@ -2,12 +2,13 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 're
 import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import {
-  ArrowLeft, ChevronRight, CirclePlay, Clock3, Film, House, ListVideo,
+  ArrowLeft, ChevronRight, CirclePlay, Clock3, Film, House, ListVideo, Maximize2,
   Headphones, LogOut, Menu, Pause, Play, Search, SkipForward, Tv, X,
 } from 'lucide-react';
 import './style.css';
 import { HomeScreenGuide } from './HomeScreenGuide';
-import { collectionQueue, mediaPath, parseCaptions, resumeAudio, type Caption, type Playable } from './playback';
+import { CaptionReader } from './CaptionReader';
+import { activeCaptionIndex, collectionQueue, mediaPath, parseCaptions, resumeAudio, type Caption, type Playable } from './playback';
 import { claimAudioPlayback, ensureAudioPlayback, setMediaSessionActions, syncMediaSession } from './media-session';
 import { createPlaybackDiagnostics } from './playback-diagnostics';
 
@@ -115,9 +116,9 @@ function WatchPage({ video, videos, chapters, onBack, onNext, onSelect, onProgre
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(video.duration_seconds);
   const [playbackRate, setPlaybackRate] = useState(1);
-  const [captions, setCaptions] = useState<Caption[]>([]);
+  const [captionData, setCaptionData] = useState<{ id: string; cues: Caption[]; error: boolean }>({ id: '', cues: [], error: false });
   const [captionsVisible, setCaptionsVisible] = useState(true);
-  const [captionError, setCaptionError] = useState(false);
+  const [readerOpen, setReaderOpen] = useState(false);
   const [diagnosticText, setDiagnosticText] = useState('');
   const [diagnosticCopied, setDiagnosticCopied] = useState(false);
   const [diagnostics] = useState(() => {
@@ -127,8 +128,11 @@ function WatchPage({ video, videos, chapters, onBack, onNext, onSelect, onProgre
   const source = mediaPath(video);
   const collection = collectionQueue(videos, video);
   const next = collection[collection.findIndex((item) => item.id === video.id) + 1];
-  const activeCaption = captions.find((cue) => cue.start <= currentTime && currentTime < cue.end);
+  const captions = captionData.id === video.id ? captionData.cues : [];
+  const captionError = captionData.id === video.id && captionData.error;
+  const activeCaption = captions[activeCaptionIndex(captions, currentTime)];
   useEffect(() => { lastSavedAt.current = 0; setAutoplayBlocked(false); setPlaybackError(false); if (audioOnly) setMirrorMode(false); }, [video.id]);
+  useEffect(() => { if (!audioOnly || !video.has_subtitles) setReaderOpen(false); }, [audioOnly, video.has_subtitles]);
   useLayoutEffect(() => {
     if (audioOnly) return claimAudioPlayback(navigator);
   }, [audioOnly]);
@@ -140,14 +144,14 @@ function WatchPage({ video, videos, chapters, onBack, onNext, onSelect, onProgre
   }, [video.id, audioOnly]);
   useEffect(() => {
     const controller = new AbortController();
-    setCaptions([]); setCaptionError(false);
+    setCaptionData({ id: video.id, cues: [], error: false });
     if (video.has_subtitles) void fetch(`/subtitles/${video.id}.vtt`, { credentials: 'same-origin', signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) throw new Error('Subtitle unavailable');
         const cues = parseCaptions(await response.text());
         if (!cues.length) throw new Error('Empty subtitles');
-        setCaptions(cues);
-      }).catch(() => { if (!controller.signal.aborted) setCaptionError(true); });
+        if (!controller.signal.aborted) setCaptionData({ id: video.id, cues, error: false });
+      }).catch(() => { if (!controller.signal.aborted) setCaptionData({ id: video.id, cues: [], error: true }); });
     return () => controller.abort();
   }, [video.id, video.has_subtitles]);
   useEffect(() => {
@@ -298,6 +302,10 @@ function WatchPage({ video, videos, chapters, onBack, onNext, onSelect, onProgre
     updateMediaSession();
     revealMirrorControls();
   }
+  function changePlaybackRate(rate: number) {
+    setPlaybackRate(rate);
+    if (playerRef.current) playerRef.current.playbackRate = rate;
+  }
   return <main className="watch-layout">
     <div className="watch-main">
       <button className="back-link" onClick={onBack}><ArrowLeft size={18} /> 返回片庫</button>
@@ -315,7 +323,7 @@ function WatchPage({ video, videos, chapters, onBack, onNext, onSelect, onProgre
           onPlaying: () => { refreshMediaControls(); trace('media:playing'); },
           onPause: () => { setPaused(true); updateMediaSession(); trace('media:pause'); save(true); },
           onDurationChange: updateMediaSession,
-          onRateChange: updateMediaSession, onSeeked: () => { updateMediaSession(); save(true); }, onEnded: ended, onError: () => { trace('media:error'); setPlaybackError(true); },
+          onRateChange: updateMediaSession, onSeeked: (event: React.SyntheticEvent<HTMLMediaElement>) => { setCurrentTime(event.currentTarget.currentTime); updateMediaSession(); save(true); }, onEnded: ended, onError: () => { trace('media:error'); setPlaybackError(true); },
         })}
         {autoplayBlocked && !audioOnly && !playbackError && <button className="player-overlay" onClick={() => { void playerRef.current?.play().then(() => setAutoplayBlocked(false)).catch(() => setAutoplayBlocked(true)); }}><CirclePlay size={54} /> 點擊播放</button>}
         {playbackError && <div className="player-message">媒體暫時無法播放，請檢查網路或稍後再試。</div>}
@@ -336,9 +344,13 @@ function WatchPage({ video, videos, chapters, onBack, onNext, onSelect, onProgre
         </>}
       </div>
       {!mirrorMode && !audioOnly && <div className="player-actions"><button className="mirror-start" type="button" onClick={enterMirrorMode}><Tv size={18} /> 電視鏡像全畫面</button><span>鏡像輸出時按此播放；若要隱藏 Safari 工具列，請從分享選單加入主畫面，再由主畫面圖示開啟。</span></div>}
-      {audioOnly && <div className="audio-actions"><button className="next-button" onClick={() => seekTo(currentTime - 15)}>倒退 15 秒</button><button className="next-button" onClick={() => seekTo(currentTime + 15)}>快轉 15 秒</button><label>播放速度 <select aria-label="播放速度" value={playbackRate} onChange={(event) => { const rate = Number(event.target.value); setPlaybackRate(rate); if (playerRef.current) playerRef.current.playbackRate = rate; }}>{[0.75,1,1.25,1.5,2].map((rate) => <option key={rate} value={rate}>{rate}×</option>)}</select></label></div>}
+      {audioOnly && <div className="audio-actions"><button className="next-button" onClick={() => seekTo(currentTime - 15)}>倒退 15 秒</button><button className="next-button" onClick={() => seekTo(currentTime + 15)}>快轉 15 秒</button><label>播放速度 <select aria-label="播放速度" value={playbackRate} onChange={(event) => changePlaybackRate(Number(event.target.value))}>{[0.75,1,1.25,1.5,2].map((rate) => <option key={rate} value={rate}>{rate}×</option>)}</select></label></div>}
       {audioOnly && <details className="playback-help"><summary>耳機播放疑難排解</summary><p>若耳機恢復播放時跳到其他 App，請回到本頁點播放。也可用 Safari 開啟同一網站比較。iPhone 暫停後可能將播放控制交給其他 App。</p><button className="next-button" onClick={() => { refreshMediaControls(); play(); }}>恢復本頁播放</button><button className="next-button" onClick={() => void copyDiagnostics()}>{diagnosticCopied ? '已複製播放診斷' : '複製播放診斷'}</button><small>只記錄本機播放事件，不含帳密、媒體網址或內容；不會自動傳送。</small>{diagnosticText && <textarea aria-label="播放診斷紀錄" readOnly value={diagnosticText} />}</details>}
-      {video.has_subtitles ? <section className="reader-captions" aria-label="字幕與跟讀文字"><button className="next-button" aria-pressed={captionsVisible} onClick={() => setCaptionsVisible(!captionsVisible)}>{captionsVisible ? '隱藏字幕' : '顯示字幕'}</button><small>正體中文 · {video.topics.includes('字幕時間估算') ? '分段時間為估算' : '跟讀字幕'}</small>{captionsVisible && <p>{captionError ? '字幕暫時無法載入，不影響音訊播放。' : activeCaption?.text || (captions.length ? (currentTime === 0 && paused ? '播放時顯示跟讀文字' : '\u00a0') : '載入字幕中…')}</p>}</section> : audioOnly ? <section className="reader-captions" aria-label="字幕狀態"><small>本章尚無字幕，仍可正常收聽。</small></section> : null}
+      {video.has_subtitles ? <section className="reader-captions" aria-label="字幕與跟讀文字"><div className="reader-caption-actions"><button className="next-button" aria-pressed={captionsVisible} onClick={() => setCaptionsVisible(!captionsVisible)}>{captionsVisible ? '隱藏字幕' : '顯示字幕'}</button>{audioOnly && <button className="next-button" onClick={() => setReaderOpen(true)}><Maximize2 size={18} /> 全螢幕字幕</button>}</div><small>正體中文 · {video.topics.includes('字幕時間估算') ? '分段時間為估算' : '跟讀字幕'}</small>{captionsVisible && <p>{captionError ? '字幕暫時無法載入，不影響音訊播放。' : activeCaption?.text || (captions.length ? (currentTime === 0 && paused ? '播放時顯示跟讀文字' : '\u00a0') : '載入字幕中…')}</p>}</section> : audioOnly ? <section className="reader-captions" aria-label="字幕狀態"><small>本章尚無字幕，仍可正常收聽。</small></section> : null}
+      {readerOpen && audioOnly && Boolean(video.has_subtitles) && <CaptionReader chapterId={video.id} title={video.title} collection={video.collection}
+        captions={captions} currentTime={currentTime} duration={duration} paused={paused} playbackRate={playbackRate}
+        loadingError={captionError} playbackError={playbackError} onClose={() => setReaderOpen(false)} onTogglePlayback={togglePlayback}
+        onSeek={seekTo} onRateChange={changePlaybackRate} onNext={next ? advance : undefined} />}
       <div className="watch-heading"><div><span className="eyebrow">{video.collection}{video.period ? ` · ${video.period}` : ''}</span><h1>{video.title}</h1></div>{next && <button className="next-button" onClick={onNext}>下一集 <SkipForward size={17} /></button>}</div>
       <div className="watch-meta"><span><Clock3 size={15} /> {formatDuration(video.duration_seconds)}</span><span>{video.topics.slice(0, 3).join(' · ')}</span></div>
       {chapters.length > 0 && <section className="chapters"><h2>影片章節 <small>{chapters.length} 段</small></h2><div className="chapter-list">{chapters.map((chapter, index) => <button key={`${index}-${chapter.start_seconds}`} onClick={() => chapterJump(chapter.start_seconds)}><span>{String(index + 1).padStart(2, '0')}</span><strong>{chapter.title}</strong><small>{formatDuration(chapter.start_seconds)}</small></button>)}</div></section>}

@@ -4,7 +4,7 @@ import { build } from 'esbuild';
 import { mediaSpec } from '../cli/media.mjs';
 
 const { outputFiles } = await build({ entryPoints:[new URL('../src/playback.ts',import.meta.url).pathname],bundle:true,write:false,format:'esm' });
-const { collectionQueue, mediaPath, parseCaptions, resumeAudio } = await import(`data:text/javascript;base64,${Buffer.from(outputFiles[0].text).toString('base64')}`);
+const { activeCaptionIndex, collectionQueue, mediaPath, parseCaptions, resumeAudio } = await import(`data:text/javascript;base64,${Buffer.from(outputFiles[0].text).toString('base64')}`);
 const sessionBuild = await build({ entryPoints:[new URL('../src/media-session.ts',import.meta.url).pathname],bundle:true,write:false,format:'esm' });
 const { claimAudioPlayback, ensureAudioPlayback, setMediaSessionActions, syncMediaSession } = await import(`data:text/javascript;base64,${Buffer.from(sessionBuild.outputFiles[0].text).toString('base64')}`);
 const diagnosticsBuild = await build({ entryPoints:[new URL('../src/playback-diagnostics.ts',import.meta.url).pathname],bundle:true,write:false,format:'esm' });
@@ -81,6 +81,14 @@ test('caption parser retains literal text and rejects invalid timestamps and ove
   const cues = parseCaptions('WEBVTT\n\n1\n00:00:01.000 --> 00:00:02.500\n<script>正體中文</script>\n\n00:00:04.000 --> 00:00:03.000\n逆序\n\n00:90:00.000 --> 01:00:00.000\n無效');
   assert.deepEqual(cues,[{start:1,end:2.5,text:'<script>正體中文</script>'}]);
   assert.deepEqual(parseCaptions('WEBVTT\n'+'x'.repeat(1_000_000)),[]);
+});
+
+test('reading highlights follow exact cue boundaries, silence, and seeks in either direction', () => {
+  const cues = parseCaptions('WEBVTT\n\n00:00:01.000 --> 00:00:03.000\n同一句話\n\n00:00:03.000 --> 00:00:05.000\n接著朗讀\n\n00:00:08.000 --> 00:00:10.000\n同一句話');
+  // Real media times may move backwards after a seek; text alone is not a cue identity.
+  const times = [0, 1, 2.999, 3, 5, 7.9, 8, 10, 8.5, 1.25, NaN, -1];
+  assert.deepEqual(times.map((time) => activeCaptionIndex(cues, time)), [-1, 0, 0, 1, -1, -1, 2, -1, 2, 0, -1, -1]);
+  assert.equal(activeCaptionIndex([], 8), -1);
 });
 
 test('audio MIME and extension must agree, including for incremental imports', () => {
