@@ -1,4 +1,5 @@
 // Local, synthetic data only. This module is loaded in Vite's demo mode, never by the Worker.
+import readingIllustrations from '../demo/reading-illustrations.json';
 type DemoVideo = {
   id: string; title: string; collection: string; kind: 'video' | 'audio'; period: null;
   duration_seconds: number; bytes: number; topics: string[]; sort_key: string;
@@ -55,6 +56,8 @@ export async function demoApi<T>(path: string, options?: RequestInit): Promise<T
     }) } as T;
   }
   const chapterId = /^\/api\/videos\/([a-z0-9-]+)\/chapters$/.exec(path)?.[1];
+  const illustratedId = /^\/api\/reading-content\/([a-z0-9-]+)$/.exec(path)?.[1];
+  if (illustratedId) return (illustratedId==='demo-audio-01'?readingIllustrations:{version:1,caption_sha256:null,images:[]}) as T;
   if (chapterId && videos.some((video) => video.id === chapterId)) return { chapters: chapters[chapterId] || [] } as T;
   const progressId = /^\/api\/progress\/([a-z0-9-]+)$/.exec(path)?.[1];
   if (progressId && method === 'PUT' && videos.some((video) => video.id === progressId)) {

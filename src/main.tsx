@@ -9,6 +9,7 @@ import './style.css';
 import { HomeScreenGuide } from './HomeScreenGuide';
 import { CaptionReader } from './CaptionReader';
 import { resumeReading, type ReaderMode } from './reading';
+import { matchingIllustrations, type ReadingIllustration } from './illustrations';
 import { activeCaptionIndex, collectionQueue, mediaPath, parseCaptions, resumeAudio, type Caption, type Playable } from './playback';
 import { claimAudioPlayback, ensureAudioPlayback, setMediaSessionActions, syncMediaSession } from './media-session';
 import { createPlaybackDiagnostics } from './playback-diagnostics';
@@ -25,6 +26,7 @@ type Chapter = { title: string; start_seconds: number };
 type Tab = 'home' | 'continue' | 'collection';
 type OpenIntent = 'default' | 'read' | 'listen';
 const DEMO_MODE = import.meta.env.MODE === 'demo';
+const EMPTY_ILLUSTRATIONS: ReadingIllustration[] = [];
 
 function formatDuration(seconds: number): string {
   const total = Math.floor(seconds);
@@ -125,7 +127,8 @@ function WatchPage({ video, videos, chapters, openIntent, onBack, onNext, onSele
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(video.duration_seconds);
   const [playbackRate, setPlaybackRate] = useState(1);
-  const [captionData, setCaptionData] = useState<{ id: string; cues: Caption[]; error: boolean }>({ id: '', cues: [], error: false });
+  const [captionData, setCaptionData] = useState<{ id: string; cues: Caption[]; hash: string; error: boolean }>({ id: '', cues: [], hash: '', error: false });
+  const [illustrationData, setIllustrationData] = useState<{id:string;images:ReadingIllustration[];error:boolean}>({id:'',images:[],error:false});
   const [captionsVisible, setCaptionsVisible] = useState(true);
   const [readerOpen, setReaderOpen] = useState(readOnOpen);
   const [readerMode, setReaderMode] = useState<ReaderMode>(readOnOpen ? 'read' : 'listen');
@@ -160,16 +163,29 @@ function WatchPage({ video, videos, chapters, openIntent, onBack, onNext, onSele
   }, [video.id, audioOnly, openIntent]);
   useEffect(() => {
     const controller = new AbortController();
-    setCaptionData({ id: video.id, cues: [], error: false });
+    setCaptionData({ id: video.id, cues: [], hash: '', error: false });
     if (video.has_subtitles) void fetch(`/subtitles/${video.id}.vtt`, { credentials: 'same-origin', signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) throw new Error('Subtitle unavailable');
-        const cues = parseCaptions(await response.text());
+        const text = await response.text();
+        const cues = parseCaptions(text);
         if (!cues.length) throw new Error('Empty subtitles');
-        if (!controller.signal.aborted) setCaptionData({ id: video.id, cues, error: false });
-      }).catch(() => { if (!controller.signal.aborted) setCaptionData({ id: video.id, cues: [], error: true }); });
+        const digest = await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text));
+        const hash = [...new Uint8Array(digest)].map(b=>b.toString(16).padStart(2,'0')).join('');
+        if (!controller.signal.aborted) setCaptionData({ id: video.id, cues, hash, error: false });
+      }).catch(() => { if (!controller.signal.aborted) setCaptionData({ id: video.id, cues: [], hash:'', error: true }); });
     return () => controller.abort();
   }, [video.id, video.has_subtitles]);
+  useEffect(()=>{
+    if (!readerOpen || readerMode!=='read' || !captions.length || illustrationData.id===video.id) return;
+    const controller = new AbortController();
+    void api<unknown>(`/api/reading-content/${video.id}`,{signal:controller.signal}).then(value=>{
+      const images = matchingIllustrations(value,captionData.hash,captions.length);
+      if (!images) throw new Error('Illustration anchors do not match captions');
+      if (!controller.signal.aborted) setIllustrationData({id:video.id,images,error:false});
+    }).catch(()=>{if (!controller.signal.aborted) setIllustrationData({id:video.id,images:[],error:true});});
+    return ()=>controller.abort();
+  },[readerOpen,readerMode,video.id,captions,captionData.hash,illustrationData.id]);
   useEffect(() => {
     const persist = () => save(true);
     const visibility = () => {
@@ -381,6 +397,7 @@ function WatchPage({ video, videos, chapters, openIntent, onBack, onNext, onSele
       {audioOnly && <details className="playback-help"><summary>耳機播放疑難排解</summary><p>若耳機恢復播放時跳到其他 App，請回到本頁點播放。也可用 Safari 開啟同一網站比較。iPhone 暫停後可能將播放控制交給其他 App。</p><button className="next-button" onClick={() => { refreshMediaControls(); play(); }}>恢復本頁播放</button><button className="next-button" onClick={() => void copyDiagnostics()}>{diagnosticCopied ? '已複製播放診斷' : '複製播放診斷'}</button><small>只記錄本機播放事件，不含帳密、媒體網址或內容；不會自動傳送。</small>{diagnosticText && <textarea aria-label="播放診斷紀錄" readOnly value={diagnosticText} />}</details>}
       {video.has_subtitles ? <section className="reader-captions" aria-label="字幕與跟讀文字"><div className="reader-caption-actions"><button className="next-button" aria-pressed={captionsVisible} onClick={() => setCaptionsVisible(!captionsVisible)}>{captionsVisible ? '隱藏字幕' : '顯示字幕'}</button>{audioOnly && <button className="next-button" onClick={() => { setReaderMode('listen'); setReaderOpen(true); }}><Maximize2 size={18} /> 全螢幕字幕</button>}{audioOnly && <button className="next-button" onClick={openReading}><BookOpen size={18} /> 閱讀章節</button>}</div><small>正體中文 · {video.topics.includes('字幕時間估算') ? '分段時間為估算' : '跟讀字幕'}</small>{captionsVisible && <p>{captionError ? '字幕暫時無法載入，不影響音訊播放。' : activeCaption?.text || (captions.length ? (currentTime === 0 && paused ? '播放時顯示跟讀文字' : '\u00a0') : '載入字幕中…')}</p>}</section> : audioOnly ? <section className="reader-captions" aria-label="字幕狀態"><small>本章尚無字幕，仍可正常收聽。</small></section> : null}
       {readerOpen && audioOnly && Boolean(video.has_subtitles) && <CaptionReader key={video.id} chapterId={video.id} title={video.title} collection={video.collection}
+        illustrations={illustrationData.id===video.id?illustrationData.images:EMPTY_ILLUSTRATIONS} illustrationError={illustrationData.id===video.id&&illustrationData.error}
         captions={captions} currentTime={currentTime} duration={duration} paused={paused} playbackRate={playbackRate}
         mode={readerMode} readingPosition={readingPosition} onModeChange={changeReaderMode}
         onReadingProgress={(position) => { readingAnchor.current = position; return onReadingProgress(video.id, position); }}

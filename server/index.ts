@@ -1,5 +1,6 @@
 import { Hono, type MiddlewareHandler } from 'hono';
 import { clearSession, createSession, equalDigest, getViewer, passwordDigest, type AppEnv } from './auth';
+import { illustrationFile, parseIllustrations } from '../src/illustrations';
 
 type VideoRow = {
   id: string; title: string; collection: string; kind: string; period: string | null;
@@ -249,6 +250,38 @@ app.get('/subtitles/:filename', async (context) => {
     'Content-Type': 'text/vtt; charset=utf-8', 'Cache-Control': 'private, no-store',
     'X-Content-Type-Options': 'nosniff',
   } });
+});
+
+async function chapterIllustrations(context: Parameters<MiddlewareHandler<AppEnv>>[0], id: string) {
+  if (!/^[a-zA-Z0-9_-]{6,64}$/.test(id)) return null;
+  const row = await context.env.DB.prepare("SELECT id FROM videos WHERE id = ? AND published = 1 AND media_type = 'audio' AND subtitle_key IS NOT NULL")
+    .bind(id).first<{id:string}>();
+  if (!row) return null;
+  const object = await context.env.MEDIA.get(`reading/${id}.json`);
+  if (!object) return {version:1 as const,caption_sha256:null,images:[]};
+  if (object.size > 256000) { await object.body.cancel(); return null; }
+  return parseIllustrations(await object.json().catch(()=>null));
+}
+
+app.get('/api/reading-content/:id', async (context) => {
+  const manifest = await chapterIllustrations(context, context.req.param('id'));
+  return manifest ? context.json(manifest) : context.notFound();
+});
+
+app.on(['GET','HEAD'], '/media/reading-images/:id/:file', async (context) => {
+  const id = context.req.param('id'), file = context.req.param('file');
+  if (!illustrationFile.test(file)) return context.notFound();
+  const manifest = await chapterIllustrations(context, id);
+  if (!manifest?.images.some(image=>image.file===file)) return context.notFound();
+  const key = `reading-images/${id}/${file}`;
+  const head = await context.env.MEDIA.head(key);
+  if (!head || head.size > 12000000) return context.notFound();
+  const headers = {'Content-Type':file.endsWith('.png')?'image/png':file.endsWith('.webp')?'image/webp':'image/jpeg',
+    'Content-Length':String(head.size),'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'};
+  if (context.req.method === 'HEAD') return new Response(null,{headers});
+  const object = await context.env.MEDIA.get(key);
+  if (!object) return context.notFound();
+  return new Response(object.body,{headers});
 });
 
 app.get('/thumbnails/:filename', async (context) => {

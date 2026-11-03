@@ -1,7 +1,8 @@
-import { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { BookOpen, Headphones, Pause, Play, SkipForward, X } from 'lucide-react';
 import { activeCaptionIndex, type Caption } from './playback';
 import { readingParagraphIndex, readingParagraphs, type ReaderMode } from './reading';
+import type { ReadingIllustration } from './illustrations';
 
 type Props = {
   chapterId: string; title: string; collection: string; captions: Caption[];
@@ -11,6 +12,7 @@ type Props = {
   loadingError: boolean; playbackError: boolean;
   onClose: () => void; onTogglePlayback: () => void; onSeek: (seconds: number) => void;
   onRateChange: (rate: number) => void; onNext?: () => void;
+  illustrations: ReadingIllustration[]; illustrationError: boolean;
 };
 
 const timeLabel = (seconds: number) => {
@@ -25,7 +27,7 @@ const timeLabel = (seconds: number) => {
 export function CaptionReader(props: Props) {
   const { chapterId, title, collection, captions, currentTime, duration, paused, playbackRate,
     mode, readingPosition, onModeChange, onReadingProgress,
-    loadingError, playbackError, onClose, onTogglePlayback, onSeek, onRateChange, onNext } = props;
+    loadingError, playbackError, onClose, onTogglePlayback, onSeek, onRateChange, onNext, illustrations, illustrationError } = props;
   const dialogRef = useRef<HTMLDialogElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const currentRef = useRef<HTMLButtonElement>(null);
@@ -43,7 +45,7 @@ export function CaptionReader(props: Props) {
   const [fontSize, setFontSize] = useState(() => matchMedia('(max-width: 680px)').matches ? 24 : 28);
   const [paragraphIndex, setParagraphIndex] = useState(0);
   const [sync, setSync] = useState<'saved' | 'saving' | 'failed'>('saved');
-  const paragraphs = useMemo(() => readingParagraphs(captions), [captions]);
+  const paragraphs = useMemo(() => readingParagraphs(captions, illustrations.map(i=>i.before_cue)), [captions, illustrations]);
   const index = activeCaptionIndex(captions, currentTime);
   const cueIndices = useMemo(() => new Map(captions.map((cue, i) => [cue, i])), [captions]);
 
@@ -75,6 +77,18 @@ export function CaptionReader(props: Props) {
     onModeChange(next, next === 'read' ? currentTime : anchor.current);
   }
   function listenHere() { flushReading(); onModeChange('listen', anchor.current); }
+  const imageSource = (file: string) => import.meta.env.MODE === 'demo'
+    ? '/thumbnails/demo-shapes-02.jpg' : `/media/reading-images/${chapterId}/${file}`;
+  function imagesBefore(cueIndex: number) {
+    return illustrations.filter(image=>image.before_cue===cueIndex).map((image,i)=><figure key={`${image.file}-${i}`}
+      className={`reading-illustration${image.decorative?' is-decoration':''}`} style={{maxWidth:image.decorative?64:image.width}}>
+      <a href={imageSource(image.file)} target="_blank" rel="noopener noreferrer" aria-label={image.alt || '放大書中圖片'} style={{aspectRatio:`${image.width} / ${image.height}`}}>
+        <img src={imageSource(image.file)} alt={image.alt} width={image.width} height={image.height}
+          loading="lazy" decoding="async" onError={event=>{event.currentTarget.hidden=true;event.currentTarget.closest('figure')?.classList.add('image-unavailable');}} />
+        <span className="reading-image-error">圖片暫時無法載入</span>
+      </a>
+    </figure>);
+  }
 
   useLayoutEffect(() => {
     const dialog = dialogRef.current;
@@ -200,11 +214,15 @@ export function CaptionReader(props: Props) {
       onScroll={trackReading} onWheel={() => setFollowing(false)} onTouchStart={() => setFollowing(false)}
       onKeyDown={(event) => { if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End'].includes(event.key)) setFollowing(false); }}>
       {captions.length ? mode === 'read' ? <article className="reading-prose" style={{ fontSize: `${fontSize}px` }}>
-        {paragraphs.map((paragraph, i) => <p key={`${chapterId}-${paragraph.start}`} ref={(element) => { paragraphRefs.current[i] = element; }}
+        {illustrationError && <p className="reading-image-note">本章圖片暫時無法載入，文字仍可閱讀。</p>}
+        {paragraphs.map((paragraph, i) => <Fragment key={`${chapterId}-${paragraph.start}`}>
+          {imagesBefore(cueIndices.get(paragraph.cues[0])!)}
+          <p ref={(element) => { paragraphRefs.current[i] = element; }}
           data-paragraph-start={paragraph.start}>{paragraph.cues.map((cue, j) => <span key={cue.start}
             ref={(element) => { cueRefs.current[cueIndices.get(cue)!] = element; }} data-reading-start={cue.start}>
             {j > 0 && /[\p{L}\p{N}]$/u.test(paragraph.cues[j - 1].text) && /^[A-Za-z0-9]/.test(cue.text) ? ' ' : ''}{cue.text}
-          </span>)}</p>)}
+          </span>)}</p></Fragment>)}
+        {imagesBefore(captions.length)}
         {onNext && <button className="reading-next-chapter" type="button" onClick={() => { flushReading(); onNext(); }}>閱讀下一章 <SkipForward size={20} /></button>}
       </article> : <ol className="caption-lines" style={{ fontSize: `${fontSize}px` }}>
         {captions.map((cue, cueIndex) => <li key={`${chapterId}-${cueIndex}`}>

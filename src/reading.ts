@@ -4,10 +4,12 @@ export type ReaderMode = 'listen' | 'read';
 export type ReadingParagraph = { start: number; end: number; text: string; cues: Caption[] };
 
 /** Preserve all cue text and its acoustic anchor while grouping sentences for reading. */
-export function readingParagraphs(captions: Caption[]): ReadingParagraph[] {
+export function readingParagraphs(captions: Caption[], breaks: number[] = []): ReadingParagraph[] {
   const paragraphs: ReadingParagraph[] = [];
+  const boundaries = new Set(breaks);
   let pending: ReadingParagraph | undefined;
-  for (const cue of captions) {
+  for (const [i, cue] of captions.entries()) {
+    if (pending && boundaries.has(i)) { paragraphs.push(pending); pending = undefined; }
     if (!pending) pending = { ...cue, cues: [cue] };
     else {
       const boundary = /[\p{L}\p{N}]$/u.test(pending.text) && /^[A-Za-z0-9]/.test(cue.text) ? ' ' : '';

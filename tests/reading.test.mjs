@@ -17,6 +17,13 @@ test('resume selects the preceding paragraph in gaps and clamps stale or initial
   assert.deepEqual([0,1,3,7,8,13,14,100].map(t=>readingParagraphIndex(p,t)),[0,0,0,0,1,1,2,2]);
   assert.equal(readingParagraphIndex([],0),-1);
 });
+test('illustration boundaries split reading paragraphs without changing caption text or acoustic anchors',()=>{
+  const cues=[{start:1,end:2,text:'前文。'},{start:3,end:4,text:'圖說。'},{start:5,end:6,text:'後文。'}];
+  const paragraphs=readingParagraphs(cues,[1,2]);
+  assert.equal(paragraphs.length,3);
+  assert.deepEqual(paragraphs.flatMap(p=>p.cues),cues);
+  assert.equal(paragraphs.map(p=>p.text).join(''),'前文。圖說。後文。');
+});
 
 test('account reading resumes include position zero and never use playback recency',()=>{
   const rows=[{id:'a',collection:'Book',sort_key:'1',media_type:'audio',has_subtitles:1,reading_position_seconds:0,reading_updated_at:5,updated_at:1},
