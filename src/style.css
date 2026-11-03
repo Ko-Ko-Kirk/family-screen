@@ -153,3 +153,23 @@
 .reading-next-chapter{display:flex;align-items:center;gap:10px;min-height:48px;margin:36px auto 0;padding:12px 20px;border:1px solid var(--fs-border);border-radius:24px;background:transparent;color:var(--fs-accent);font-size:16px}
 
 .reading-resume>svg{color:var(--fs-accent)}
+
+/* Reading keeps one compact control row at each edge; the paper gets the rest. */
+.caption-reader.is-reading[open]{display:grid;grid-template-columns:minmax(0,1fr) auto auto calc(44px + max(8px,env(safe-area-inset-right)));grid-template-rows:calc(52px + env(safe-area-inset-top)) minmax(0,1fr) calc(52px + env(safe-area-inset-bottom));column-gap:4px}
+.caption-reader.is-reading .caption-reader-header,.caption-reader.is-reading .caption-reader-tools{display:contents}
+.caption-reader.is-reading .caption-reader-heading{grid-area:1/1;align-self:end;height:44px;margin:0 0 4px max(12px,env(safe-area-inset-left))}
+.caption-reader.is-reading .caption-reader-heading>span{display:none}
+.caption-reader.is-reading .caption-reader-heading h2{margin:0;font-size:14px;line-height:44px}
+.caption-reader.is-reading .reader-mode-switch{grid-area:1/2;align-self:end;margin:0 0 4px;width:auto;padding:0;gap:0;border:0;border-radius:8px}
+.caption-reader.is-reading .reader-mode-switch button{flex:none;min-width:44px;min-height:44px;padding:0 7px;font-size:14px}
+.caption-reader.is-reading .reader-mode-switch svg{display:none}
+.caption-reader.is-reading .caption-font-controls{grid-area:1/3;align-self:end;margin:0 0 4px;gap:2px}
+.caption-reader.is-reading .caption-reader-close{grid-area:1/4;align-self:end;width:44px;height:44px;margin:0 0 4px;border-radius:8px}
+.caption-reader.is-reading .caption-scroll{grid-area:2/1/3/-1}
+.caption-reader.is-reading .reading-footer{grid-area:3/1/4/-1;min-height:0;height:100%;gap:10px;padding:4px max(12px,env(safe-area-inset-right)) calc(4px + env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left))}
+.caption-reader.is-reading .reading-footer>div{display:flex;align-items:center;gap:10px;flex:1;min-width:0}
+.caption-reader.is-reading .reading-footer strong{flex:none;font-size:12px;font-weight:400;color:var(--fs-text-muted)}
+.caption-reader.is-reading .reading-footer .reading-sync{display:flex;align-items:center;gap:4px;flex:0 1 auto;min-width:0;margin:0;white-space:nowrap;font-size:12px}
+.caption-reader.is-reading .reading-sync button{flex:none;padding:0 4px;min-width:44px;min-height:44px}
+.caption-reader.is-reading .reading-listen-here{flex:none;min-height:44px;padding:0 12px;font-size:14px}
+.caption-reader.is-reading .reading-next{min-height:44px}

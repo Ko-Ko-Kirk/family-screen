@@ -191,7 +191,7 @@ export function CaptionReader(props: Props) {
       }
     }}>
     <header className="caption-reader-header">
-      <div className="caption-reader-heading"><span><BookOpen size={16} /> {collection}</span><h2 id="caption-reader-title">{title}</h2></div>
+      <div className="caption-reader-heading"><span><BookOpen size={16} /> {collection}</span><h2 id="caption-reader-title" title={`${collection} · ${title}`}>{title}</h2></div>
       <button className="caption-reader-close" type="button" onClick={close} aria-label="退出全螢幕閱讀" autoFocus><X size={24} /></button>
     </header>
     <div className="reader-mode-switch" role="group" aria-label="全螢幕模式">
@@ -203,8 +203,7 @@ export function CaptionReader(props: Props) {
         <button className={`caption-follow${following ? ' is-following' : ''}`} type="button" aria-pressed={following}
           onClick={() => setFollowing(!following)}>{following ? '跟隨朗讀中' : '回到朗讀位置'}</button>
         <span className="caption-reader-hint">點選句子可跳轉</span>
-      </> : <span className="reading-sync" role="status">{sync === 'failed' ? <>進度尚未同步 <button type="button" onClick={flushReading}>重試</button></>
-        : sync === 'saving' ? '正在保存閱讀位置…' : '閱讀位置已保存至帳號'}</span>}
+      </> : null}
       <div className="caption-font-controls" aria-label="文字字級">
         <button type="button" aria-label="縮小文字" disabled={fontSize <= 20} onClick={() => setFontSize((size) => Math.max(20, size - 4))}>A−</button>
         <button type="button" aria-label="放大文字" disabled={fontSize >= 44} onClick={() => setFontSize((size) => Math.min(44, size + 4))}>A＋</button>
@@ -235,8 +234,9 @@ export function CaptionReader(props: Props) {
         </li>)}
       </ol> : <p className="caption-reader-empty" role="status">{loadingError ? '文字暫時無法載入。請退出後重新整理再試。' : '正在載入章節文字…'}</p>}
     </div>
-    {mode === 'read' ? <footer className="reading-footer">
-      <div><strong>朗讀已暫停</strong><span>本章 {percent}% · 可從目前位置開始聽</span></div>
+    {mode === 'read' ? <footer className="reading-footer" aria-label="閱讀進度，朗讀已暫停">
+      <div><strong>本章 {percent}%</strong><span className="reading-sync" role="status">{sync === 'failed' ? <>未同步 <button type="button" onClick={flushReading}>重試</button></>
+        : sync === 'saving' ? '保存中…' : '已保存'}</span></div>
       <button className="reading-listen-here" type="button" disabled={!paragraphs.length} onClick={listenHere}><Play size={20} fill="currentColor" /> 從這裡聽</button>
       {onNext && <button className="reading-next" type="button" onClick={() => { flushReading(); onNext(); }} aria-label="閱讀下一章"><SkipForward size={22} /></button>}
     </footer> : <footer className="caption-reader-player">
