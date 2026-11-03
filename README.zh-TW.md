@@ -53,6 +53,14 @@ cp -R skills/family-screen-setup ~/.codex/skills/
 
 > `$family-screen-setup` 請把 `/absolute/path/to/videos` 加進我現有的 Family Screen。保留原本的片單與 Cloudflare 設定，先列出新增影片、容量和預估費用；依我選定的項目上傳，最後驗證登入保護與播放。
 
+若要把準備好的文字製成語音，可另外安裝 [`google-wavenet-tts` skill](skills/google-wavenet-tts/SKILL.md)，用來選擇 WaveNet 聲音、核對帳戶額度／預算，以及依請求收據安全續跑：
+
+```bash
+cp -R skills/google-wavenet-tts ~/.codex/skills/
+```
+
+skill 附有 Python 3.10 以上可執行的離線文字分段、字元預估與完整性檢查工具；實際配音使用符合既有雲端防護規則的 Google Cloud 用戶端或私有批次控制器。輸入是已整理、依序排列的 UTF-8 `.txt`，沒有書籍擷取器。可單獨產出音訊，也可依使用者要求交給 Family Screen 匯入；網站本身不需要 Python 或 Google 憑證。
+
 第一次使用時，也可以請 skill 從部署開始處理。下面保留完整指令，方便知道 skill 實際會做什麼，或自行在終端機操作。增補既有片庫時要保留 `private/manifest.json`：`scan` 和 `from-catalog` 會依這次提供的來源重建本機片單，不能只掃新資料夾就直接覆蓋舊片單。
 
 ## 先在本機跑起來
@@ -181,6 +189,8 @@ tail -f private/upload.log
 iPhone 在背景暫停後，耳機的播放鍵可能被系統轉交其他 App；主畫面網頁與 Safari 都需要實機確認。播放器會保留暫停時的控制註冊，並在開始播放或回到前景時更新。若仍跳到其他 App，回到音訊頁展開「耳機播放疑難排解」，按「恢復本頁播放」，或改用 Safari 比較。可複製最近 60 筆播放診斷供排查指令是否送達、播放是否被拒絕；紀錄只存在本機，不含帳密、媒體網址或內容，也不會自動傳送。網頁無法保證 iOS 一直把耳機控制交給它。[Media Session 規範](https://w3c.github.io/mediasession/#routing)、[WebKit 背景暫停問題](https://bugs.webkit.org/show_bug.cgi?id=243258)。
 
 清單可加上 `subtitle_path`，指定本機小於 1 MB 的 UTF-8 WebVTT 檔。匯入後的字幕和音訊一樣需要登入，不會放進前端靜態檔案。播放器以純文字顯示正體中文跟讀字幕，可自行隱藏。字幕時間若是估算，應在製作時註明；播放器不會額外呼叫付費逐字稿或對齊服務。部署前套用 `0003_audio.sql`，既有影片與觀看進度保留。
+
+有字幕的有聲書可按「全螢幕字幕」，一邊聽、一邊看全文。畫面依 WebVTT 每句起訖時間高亮並自動捲動，拖曳進度或調整速度後仍跟著音訊時間；點句子可跳到該句，字級也能調整。自行捲動瀏覽會暫停自動跟隨，按「回到朗讀位置」即可恢復。全畫面保留播放／暫停、時間軸與下一集，開關模式沿用同一個音訊元素與進度。閱讀畫面填滿網站視窗；Safari 的瀏覽器工具列仍屬於瀏覽器，加入主畫面的版本則使用獨立視窗。
 
 要替已上線的媒體換字幕，在私有 manifest 設好該筆的 `subtitle_path`，再執行：
 

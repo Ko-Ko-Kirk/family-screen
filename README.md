@@ -53,6 +53,14 @@ Open the repository in Codex and invoke `$family-screen-setup`. For example:
 
 > `$family-screen-setup` Add `/absolute/path/to/videos` to my existing Family Screen. Preserve the current catalog and Cloudflare configuration. Show me the new videos, storage estimate, and expected cost; upload the ones I select, then verify authenticated playback and anonymous access protection.
 
+For prepared text you want to narrate, the optional [`google-wavenet-tts` skill](skills/google-wavenet-tts/SKILL.md) guides voice selection, billing checks, and receipt-based recovery. Install it separately:
+
+```bash
+cp -R skills/google-wavenet-tts ~/.codex/skills/
+```
+
+It includes a Python 3.10+ offline text planner and integrity checker; actual synthesis uses an authorized Google Cloud client or private controller. It starts with ordered UTF-8 `.txt` files and has no document extractor. It can finish standalone audio or hand off an explicitly requested import to Family Screen. The website does not need Python or Google credentials.
+
 For a new library, you can ask the skill to handle setup and deployment too. The commands below document what it does and can also be run manually. When extending an existing library, preserve `private/manifest.json`: `scan` and `from-catalog` rebuild the local manifest from the input you give them. Scanning only a new folder would leave old entries out of that manifest.
 
 ## Run locally
@@ -181,6 +189,8 @@ Audio files use the same private login, byte-range delivery, collection queue, a
 After a background pause, iOS may route a headset's play button to another app. Test both Home Screen mode and Safari on the actual phone. The player keeps pause controls registered and refreshes them when playback starts or the page returns to the foreground. If playback switches apps, open the audio page's headset troubleshooting panel to resume this page or compare Safari. The panel can copy the last 60 playback events to distinguish missing remote commands from rejected playback. Events stay on the device, contain no credentials, media URLs, or content, and are never sent automatically. A webpage cannot force iOS to keep routing headset commands to it. See the [Media Session routing specification](https://w3c.github.io/mediasession/#routing) and [WebKit background-pause report](https://bugs.webkit.org/show_bug.cgi?id=243258).
 
 An optional `subtitle_path` in a catalog row points to a local UTF-8 WebVTT file under 1 MB. The import uploads it privately alongside the audio. The player displays plain-text Traditional Chinese cues and lets viewers hide them. Subtitle text is authenticated like the audio; it is never bundled into the static website. Approximate timing should be disclosed in the cues/source workflow; this player does not run or charge for transcription or alignment. Existing media IDs and playback progress survive the additive `0003_audio.sql` migration.
+
+For audiobooks with captions, select **全螢幕字幕** (fullscreen captions) to read the transcript while listening. The current sentence is highlighted using its WebVTT start and end times and follows the audio clock when seeking or changing speed. Tap a sentence to seek to it, adjust the text size, or scroll to browse; **回到朗讀位置** resumes automatic following. Play, pause, the timeline, and next chapter remain available. Opening or closing the reading view keeps the same audio element and playback position. It fills the app viewport; Safari's browser bars remain outside that viewport, while the Home Screen app uses its standalone window.
 
 To replace captions on existing media, set its `subtitle_path` in your private manifest, then run:
 

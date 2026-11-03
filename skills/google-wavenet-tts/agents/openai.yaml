@@ -1,0 +1,4 @@
+interface:
+  display_name: "Google WaveNet TTS"
+  short_description: "將文字製成 WaveNet 語音，核對額度與預算並安全續跑。"
+  default_prompt: "使用 $google-wavenet-tts 將我準備好的文字製成 WaveNet 語音，先確認指定雲端帳號、聲音與預算。"

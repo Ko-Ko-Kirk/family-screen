@@ -21,6 +21,13 @@ export function resumeAudio<T extends Playable & { updated_at: number | null; co
 }
 
 export type Caption = { start: number; end: number; text: string };
+
+/** Cue boundaries follow the media clock, including gaps, seeks, and repeated sentences. */
+export function activeCaptionIndex(captions: Caption[], seconds: number): number {
+  if (!Number.isFinite(seconds) || seconds < 0) return -1;
+  return captions.findIndex((cue) => cue.start <= seconds && seconds < cue.end);
+}
+
 const timestamp = (value: string): number => {
   if (!/^\d{2,}:\d{2}:\d{2}\.\d{3}$/.test(value)) return NaN;
   const [hours, minutes, seconds] = value.split(':').map(Number);

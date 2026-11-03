@@ -13,6 +13,11 @@ const wrangler = join(root, 'node_modules/wrangler/bin/wrangler.js');
 const testConfig = join(root, 'wrangler.example.jsonc');
 const testEnv = { ...process.env, WRANGLER_LOG_PATH: join(tmpdir(), 'family-screen-audio-test-logs'),
   WRANGLER_REGISTRY_PATH: join(tmpdir(), 'family-screen-audio-test-registry'), WRANGLER_SEND_METRICS: 'false' };
+// Synchronous local CLI writes block socket-close notifications in the test process.
+// Use fresh connections so an expired pooled socket cannot hide a valid API response.
+const fetch = (url, options = {}) => globalThis.fetch(url, {
+  ...options, headers: { ...options.headers, Connection: 'close' },
+});
 function run(params) {
   const result = spawnSync(process.execPath, [wrangler, ...params, '--config', testConfig], { cwd: root, env: testEnv, encoding: 'utf8', timeout: 45_000 });
   assert.equal(result.status, 0, `${params[0]} failed: ${(result.stderr || result.stdout).slice(-700)}`);

@@ -12,4 +12,5 @@ wrangler.jsonc
 .dev.vars*
 private/
 *.log
+__pycache__/
 .DS_Store
