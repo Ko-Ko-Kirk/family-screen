@@ -16,6 +16,14 @@ The login page and library include an **Add to Home Screen** guide with three il
 
 The website is for browsing, playback, and resuming. It does not have a video upload or admin interface. To add videos, use the included `$family-screen-setup` skill on the computer holding your files. It guides the local CLI through preparing the catalog and thumbnails, uploading to private R2, and publishing metadata to D1.
 
+## Read and listen in fullscreen
+
+Audiobook chapters with captions include **Read chapter** and **Fullscreen captions**. In fullscreen, switch between **Listen** (timed, highlighted captions) and **Read** (continuous, selectable text). Entering Read pauses narration. Reading does not move your saved listening position. **Listen from here** starts audio at the sentence currently being read and returns to timed captions.
+
+Reading anchors are saved separately to the signed-in account. Opening a chapter with a reading bookmark restores that sentence in Read mode, with narration paused. The library also offers **Continue reading** and **Listen from here** for your most recently read chapter. Text size changes preserve the sentence anchor. Reading uses the existing caption text, grouped into paragraphs; book typography, illustrations and footnotes are not imported.
+
+Apply D1 migrations, including `0004_reading_progress.sql`, **before** deploying this version. The additive table leaves `watch_progress`, the catalog and media unchanged. A failed progress save is shown in the reader with a retry action; private chapters are not cached for offline use.
+
 ## Try the local demo
 
 You can explore the library without a Cloudflare account, credentials, or your own videos. With Node.js 22 or newer:

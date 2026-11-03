@@ -155,6 +155,24 @@ test('only an authenticated viewer can browse, seek, and resume a private video'
     const again = await fetch(`${base}/api/login`, { method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:account,password}) });
     const saved = (await (await fetch(`${base}/api/catalog`,{headers:{Cookie:again.headers.get('set-cookie').split(';')[0]}})).json()).videos;
     assert.equal(saved.find((row) => row.id === audioId).position_seconds,17.5);
+    // Reading anchors survive new sessions, including zero, without moving playback progress.
+    const readingPath = `${base}/api/reading-progress/${audioId}`;
+    const putReading = (position, headers = auth) => fetch(readingPath, {method:'PUT',
+      headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify({position_seconds:position})});
+    assert.equal((await putReading(0, {})).status,401);
+    assert.equal((await putReading(0)).status,200);
+    assert.equal((await putReading(23.75)).status,200);
+    for (const invalid of [-1,46,null,'12']) assert.equal((await putReading(invalid)).status,400);
+    assert.equal((await fetch(readingPath,{method:'PUT',headers:{...auth,Origin:'https://other.example','Content-Type':'application/json'},body:JSON.stringify({position_seconds:10})})).status,403);
+    assert.equal((await fetch(readingPath,{method:'PUT',headers:{...auth,'Content-Type':'application/json'},body:'x'.repeat(1025)})).status,413);
+    assert.equal((await fetch(`${base}/api/reading-progress/${videoId}`,{method:'PUT',headers:{...auth,'Content-Type':'application/json'},body:JSON.stringify({position_seconds:0})})).status,404);
+    const readingLogin = await fetch(`${base}/api/login`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:account,password})});
+    const readingAuth = {Cookie:readingLogin.headers.get('set-cookie').split(';')[0]};
+    const readingSaved = (await (await fetch(`${base}/api/catalog`,{headers:readingAuth})).json()).videos.find((v)=>v.id===audioId);
+    assert.equal(readingSaved.reading_position_seconds,23.75);assert.ok(readingSaved.reading_updated_at);
+    assert.equal(readingSaved.position_seconds,17.5);
+    const otherReading = (await (await fetch(`${base}/api/catalog`,{headers:secondAuth})).json()).videos.find((v)=>v.id===audioId);
+    assert.equal(otherReading.reading_position_seconds,null);
     const originalAudio = Buffer.from(await (await fetch(`${base}/media/${audioId}.mp3`,{headers:auth})).arrayBuffer());
     const captionFile = join(directory, 'updated.vtt');
     writeFileSync(captionFile, 'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\n更新後的原創字幕\n');

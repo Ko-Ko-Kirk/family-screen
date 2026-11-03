@@ -5,6 +5,7 @@ type VideoRow = {
   id: string; title: string; collection: string; kind: string; period: string | null;
   duration_seconds: number; bytes: number; topics_json: string; sort_key: string;
   position_seconds: number | null; completed: number | null; updated_at: number | null;
+  reading_position_seconds: number | null; reading_updated_at: number | null;
   media_type: 'video' | 'audio'; media_format: 'mp4' | 'mp3' | 'm4a'; has_subtitles: number;
 };
 
@@ -114,11 +115,13 @@ app.get('/api/catalog', async (context) => {
     SELECT v.id, v.title, v.collection, v.kind, v.period, v.duration_seconds,
       v.bytes, v.topics_json, v.sort_key, v.media_type, v.media_format,
       (v.subtitle_key IS NOT NULL) AS has_subtitles,
-      p.position_seconds, p.completed, p.updated_at
+      p.position_seconds, p.completed, p.updated_at,
+      r.position_seconds AS reading_position_seconds, r.updated_at AS reading_updated_at
     FROM videos v
     LEFT JOIN watch_progress p ON p.video_id = v.id AND p.user_id = ?
+    LEFT JOIN reading_progress r ON r.video_id = v.id AND r.user_id = ?
     WHERE v.published = 1 ORDER BY v.collection, v.sort_key, v.id
-  `).bind(viewer.id).all<VideoRow>();
+  `).bind(viewer.id, viewer.id).all<VideoRow>();
   const videos = result.results.map(({ topics_json, ...video }) => ({ ...video, topics: JSON.parse(topics_json) as string[] }));
   return context.json({ videos });
 });
@@ -156,6 +159,26 @@ app.put('/api/progress/:id', async (context) => {
       updated_at = excluded.updated_at
   `).bind(context.get('viewer').id, id, Math.min(position, video.duration_seconds), completed).run();
   return context.json({ ok: true, completed: Boolean(completed) });
+});
+
+app.put('/api/reading-progress/:id', async (context) => {
+  const parsed = await limitedJson(context, 1024);
+  if ('error' in parsed && parsed.error === 'too_large') return context.json({ error: '請求過大' }, 413);
+  const id = context.req.param('id');
+  const video = await context.env.DB.prepare(`SELECT duration_seconds FROM videos
+    WHERE id = ? AND published = 1 AND media_type = 'audio' AND subtitle_key IS NOT NULL`)
+    .bind(id).first<{ duration_seconds: number }>();
+  if (!video) return context.json({ error: '找不到可閱讀的章節' }, 404);
+  const body = 'body' in parsed ? parsed.body : null;
+  const position = typeof body === 'object' && body !== null && 'position_seconds' in body ? body.position_seconds : null;
+  if (typeof position !== 'number' || !Number.isFinite(position) || position < 0 || position > video.duration_seconds) {
+    return context.json({ error: '閱讀位置無效' }, 400);
+  }
+  await context.env.DB.prepare(`INSERT INTO reading_progress (user_id, video_id, position_seconds, updated_at)
+    VALUES (?, ?, ?, ?) ON CONFLICT(user_id, video_id) DO UPDATE SET
+    position_seconds = excluded.position_seconds, updated_at = excluded.updated_at`)
+    .bind(context.get('viewer').id, id, position, Date.now()).run();
+  return context.json({ ok: true });
 });
 
 function parseRange(header: string | undefined, size: number): { start: number; end: number } | null | 'invalid' {
