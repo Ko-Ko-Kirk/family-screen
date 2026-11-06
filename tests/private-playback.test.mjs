@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createServer } from 'node:net';
@@ -73,6 +73,10 @@ test('only an authenticated viewer can browse, seek, and resume a private video'
       'sine=frequency=220:duration=45','-c:a','libmp3lame',audio], { encoding: 'utf8' });
     assert.equal(tone.status, 0, tone.stderr);
     writeFileSync(vtt, 'WEBVTT\n\n00:00:00.000 --> 00:00:45.000\n測試字幕 <script>不執行</script>\n');
+    const illustrationFile=createHash('sha256').update(readFileSync(thumbnail)).digest('hex')+'.jpg';
+    const illustration={file:illustrationFile,before_cue:0,width:320,height:180,alt:'原創測試圖',decorative:false};
+    const illustrationManifest=join(directory,'reading.json');
+    writeFileSync(illustrationManifest,JSON.stringify({version:1,caption_sha256:createHash('sha256').update(readFileSync(vtt)).digest('hex'),images:[illustration]}));
     run(['d1', 'migrations', 'apply', 'DB', '--local', '--persist-to', state]);
     writeFileSync(sqlFile, `INSERT INTO users(username,password_salt,password_hash) VALUES ('${account}','${salt}','${digest}');
       INSERT INTO videos(id,title,collection,duration_seconds,bytes,topics_json,media_key,thumbnail_key,sort_key,published)
@@ -86,6 +90,8 @@ test('only an authenticated viewer can browse, seek, and resume a private video'
     run(['r2', 'object', 'put', `family-screen-example-media/thumbnails/${videoId}.jpg`, '--file', thumbnail, '--local', '--persist-to', state]);
     run(['r2','object','put',`family-screen-example-media/videos/${audioId}.mp3`,'--file',audio,'--local','--persist-to',state]);
     run(['r2','object','put',`family-screen-example-media/subtitles/${audioId}.vtt`,'--file',vtt,'--local','--persist-to',state]);
+    run(['r2','object','put',`family-screen-example-media/reading/${audioId}.json`,'--file',illustrationManifest,'--local','--persist-to',state]);
+    run(['r2','object','put',`family-screen-example-media/reading-images/${audioId}/${illustrationFile}`,'--file',thumbnail,'--local','--persist-to',state]);
     child = spawn(process.execPath, [wrangler, 'dev', '--ip', '127.0.0.1', '--port', String(port), '--persist-to', state, '--show-interactive-dev-session=false', '--config', testConfig],
       { cwd: root, env: testEnv, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '';
@@ -147,6 +153,20 @@ test('only an authenticated viewer can browse, seek, and resume a private video'
     assert.equal(captions.headers.get('cache-control'), 'private, no-store');
     assert.match(await captions.text(), /測試字幕/);
     assert.equal((await fetch(`${base}/subtitles/${videoId}.vtt`, { headers:auth })).status, 404);
+    const illustrationPath=`/media/reading-images/${audioId}/${illustrationFile}`;
+    assert.equal((await fetch(base+illustrationPath)).status,401);
+    assert.equal((await fetch(`${base}/api/reading-content/${audioId}`)).status,401);
+    const illustrated=await fetch(`${base}/api/reading-content/${audioId}`,{headers:auth});
+    assert.deepEqual((await illustrated.json()).images,[illustration]);
+    const picture=await fetch(base+illustrationPath,{headers:auth});
+    assert.equal(picture.status,200);assert.equal(picture.headers.get('content-type'),'image/jpeg');
+    assert.equal(picture.headers.get('cache-control'),'private, no-store');
+    assert.equal(picture.headers.get('x-content-type-options'),'nosniff');
+    assert.deepEqual(Buffer.from(await picture.arrayBuffer()),readFileSync(thumbnail));
+    assert.equal((await fetch(base+illustrationPath,{method:'HEAD',headers:auth})).status,200);
+    assert.equal((await fetch(`${base}/api/reading-content/${videoId}`,{headers:auth})).status,404);
+    assert.equal((await fetch(`${base}/media/reading-images/${audioId}/${'b'.repeat(64)}.jpg`,{headers:auth})).status,404);
+    assert.equal((await fetch(`${base}/media/reading-images/${audioId}/${'b'.repeat(64)}.svg`,{headers:auth})).status,404);
     assert.equal((await fetch(`${base}/api/progress/${audioId}`, {method:'PUT',headers:{...auth,'Content-Type':'application/json'},body:JSON.stringify({position_seconds:17.5})})).status,200);
     const another = await fetch(`${base}/api/login`, { method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:'another',password}) });
     const secondAuth = { Cookie: another.headers.get('set-cookie').split(';')[0] };
@@ -155,6 +175,24 @@ test('only an authenticated viewer can browse, seek, and resume a private video'
     const again = await fetch(`${base}/api/login`, { method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:account,password}) });
     const saved = (await (await fetch(`${base}/api/catalog`,{headers:{Cookie:again.headers.get('set-cookie').split(';')[0]}})).json()).videos;
     assert.equal(saved.find((row) => row.id === audioId).position_seconds,17.5);
+    // Reading anchors survive new sessions, including zero, without moving playback progress.
+    const readingPath = `${base}/api/reading-progress/${audioId}`;
+    const putReading = (position, headers = auth) => fetch(readingPath, {method:'PUT',
+      headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify({position_seconds:position})});
+    assert.equal((await putReading(0, {})).status,401);
+    assert.equal((await putReading(0)).status,200);
+    assert.equal((await putReading(23.75)).status,200);
+    for (const invalid of [-1,46,null,'12']) assert.equal((await putReading(invalid)).status,400);
+    assert.equal((await fetch(readingPath,{method:'PUT',headers:{...auth,Origin:'https://other.example','Content-Type':'application/json'},body:JSON.stringify({position_seconds:10})})).status,403);
+    assert.equal((await fetch(readingPath,{method:'PUT',headers:{...auth,'Content-Type':'application/json'},body:'x'.repeat(1025)})).status,413);
+    assert.equal((await fetch(`${base}/api/reading-progress/${videoId}`,{method:'PUT',headers:{...auth,'Content-Type':'application/json'},body:JSON.stringify({position_seconds:0})})).status,404);
+    const readingLogin = await fetch(`${base}/api/login`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:account,password})});
+    const readingAuth = {Cookie:readingLogin.headers.get('set-cookie').split(';')[0]};
+    const readingSaved = (await (await fetch(`${base}/api/catalog`,{headers:readingAuth})).json()).videos.find((v)=>v.id===audioId);
+    assert.equal(readingSaved.reading_position_seconds,23.75);assert.ok(readingSaved.reading_updated_at);
+    assert.equal(readingSaved.position_seconds,17.5);
+    const otherReading = (await (await fetch(`${base}/api/catalog`,{headers:secondAuth})).json()).videos.find((v)=>v.id===audioId);
+    assert.equal(otherReading.reading_position_seconds,null);
     const originalAudio = Buffer.from(await (await fetch(`${base}/media/${audioId}.mp3`,{headers:auth})).arrayBuffer());
     const captionFile = join(directory, 'updated.vtt');
     writeFileSync(captionFile, 'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\n更新後的原創字幕\n');

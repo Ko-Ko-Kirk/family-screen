@@ -16,6 +16,20 @@ The login page and library include an **Add to Home Screen** guide with three il
 
 The website is for browsing, playback, and resuming. It does not have a video upload or admin interface. To add videos, use the included `$family-screen-setup` skill on the computer holding your files. It guides the local CLI through preparing the catalog and thumbnails, uploading to private R2, and publishing metadata to D1.
 
+## Read and listen in fullscreen
+
+Audiobook chapters with captions include **Read chapter** and **Fullscreen captions**. In fullscreen, switch between **Listen** (timed, highlighted captions) and **Read** (continuous, selectable text). Entering Read pauses narration. Reading does not move your saved listening position. **Listen from here** starts audio at the sentence currently being read and returns to timed captions.
+
+Fullscreen reading and listening request a screen wake lock by default, including when narration is paused. The small sun button shows whether the screen is being kept awake and lets you turn it off or retry. Closing fullscreen or leaving the foreground releases the lock; returning to the visible app requests it again if enabled. This prevents automatic screen sleep where supported (including Home Screen web apps from iOS 18.4), but cannot override a manual lock or a system refusal such as power-saving restrictions. No silent video or audio workaround is used.
+
+Reading anchors are saved separately to the signed-in account. The library shows independent listening and reading resume cards with their saved positions, even when both refer to the same chapter. **Continue listening** uses listening progress; **Listen from reading position** uses the reading bookmark. The last chosen mode is remembered per account in this browser. Restoring a reading bookmark keeps narration paused and does not count as new reading activity. In the Home Screen app, an old URL for a completed chapter can resume the unfinished next chapter in the same book; explicit reading and time links keep their requested chapter.
+
+Text size changes preserve the sentence anchor. The default size is 36px on narrow screens and 40px on larger screens, with A−/A+ controls. Reading uses the existing caption text, grouped into paragraphs, on a soft paper-colored surface. Optional private illustration manifests place raster images at caption boundaries; their caption SHA-256 must match, so stale mappings are not displayed. Images keep their proportions and colors, and open in an in-reader viewer with a **Return to reading** button. Closing an image keeps the sentence and scroll position. Picture dimensions reserve layout space to preserve the reading anchor. Book typography and footnotes are not imported.
+
+Apply D1 migrations, including `0004_reading_progress.sql`, **before** deploying this version. The additive table leaves `watch_progress`, the catalog and media unchanged. A failed progress save is shown in the reader with a retry action; private chapters are not cached for offline use.
+
+Prepared illustration manifests live in private R2 as `reading/<video-id>.json`; raster assets live under `reading-images/<video-id>/<sha256>.<jpg|png|webp>`. Authenticated `/api/reading-content/:id` and `/media/reading-images/:id/:file` routes serve only published, captioned audio chapters and listed assets. Neither endpoint exposes EPUBs, filesystem paths or public bucket URLs. Illustration preparation is a private workflow; no EPUB/Calibre extractor is included.
+
 ## Try the local demo
 
 You can explore the library without a Cloudflare account, credentials, or your own videos. With Node.js 22 or newer:

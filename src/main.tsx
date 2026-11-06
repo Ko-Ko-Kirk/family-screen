@@ -2,12 +2,16 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 're
 import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import {
-  ArrowLeft, ChevronRight, CirclePlay, Clock3, Film, House, ListVideo, Maximize2,
+  ArrowLeft, BookOpen, ChevronRight, CirclePlay, Clock3, Film, House, ListVideo, Maximize2,
   Headphones, LogOut, Menu, Pause, Play, Search, SkipForward, Tv, X,
 } from 'lucide-react';
 import './style.css';
 import { HomeScreenGuide } from './HomeScreenGuide';
 import { CaptionReader } from './CaptionReader';
+import { useScreenWake } from './use-screen-wake';
+import { openingPosition, resumeReading, startsInReading, type ReaderMode, type OpenIntent } from './reading';
+import { readResumePreference, rememberResume, startupResume } from './resume-state';
+import { matchingIllustrations, type ReadingIllustration } from './illustrations';
 import { activeCaptionIndex, collectionQueue, mediaPath, parseCaptions, resumeAudio, type Caption, type Playable } from './playback';
 import { claimAudioPlayback, ensureAudioPlayback, setMediaSessionActions, syncMediaSession } from './media-session';
 import { createPlaybackDiagnostics } from './playback-diagnostics';
@@ -18,10 +22,16 @@ type Video = Playable & {
   duration_seconds: number; bytes: number; topics: string[]; sort_key: string;
   position_seconds: number | null; completed: number | null; updated_at: number | null;
   has_subtitles?: number;
+  reading_position_seconds?: number | null; reading_updated_at?: number | null;
 };
 type Chapter = { title: string; start_seconds: number };
 type Tab = 'home' | 'continue' | 'collection';
 const DEMO_MODE = import.meta.env.MODE === 'demo';
+const EMPTY_ILLUSTRATIONS: ReadingIllustration[] = [];
+const routeIntent = (): OpenIntent => {
+  const mode = new URLSearchParams(location.search).get('mode');
+  return mode === 'listen' || mode === 'read' ? mode : 'default';
+};
 
 function formatDuration(seconds: number): string {
   const total = Math.floor(seconds);
@@ -99,12 +109,19 @@ function Login({ onLogin }: { onLogin: (viewer: Viewer) => void }) {
   </main>;
 }
 
-function WatchPage({ video, videos, chapters, onBack, onNext, onSelect, onProgress }: {
+function WatchPage({ video, videos, chapters, openIntent, onBack, onNext, onSelect, onProgress, onReadingProgress, onActivity }: {
   video: Video; videos: Video[]; chapters: Chapter[]; onBack: () => void;
-  onNext: () => void; onSelect: (video: Video) => void;
+  openIntent: OpenIntent; onNext: (intent?: OpenIntent) => void; onSelect: (video: Video) => void;
   onProgress: (id: string, position: number) => void;
+  onReadingProgress: (id: string, position: number) => Promise<void>;
+  onActivity: (mode: ReaderMode) => void;
 }) {
+  const audioOnly = video.media_type === 'audio';
+  const readOnOpen = startsInReading(video, openIntent, new URLSearchParams(location.search).has('t'));
+  const readingSession = useRef(readOnOpen);
+  const readingAnchor = useRef(video.reading_position_seconds ?? 0);
   const playerRef = useRef<HTMLVideoElement | HTMLAudioElement>(null);
+  const restoredSource = useRef<string | null>(null);
   const lastSavedAt = useRef(0);
   const [autoplayBlocked, setAutoplayBlocked] = useState(false);
   const [playbackError, setPlaybackError] = useState(false);
@@ -116,15 +133,19 @@ function WatchPage({ video, videos, chapters, onBack, onNext, onSelect, onProgre
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(video.duration_seconds);
   const [playbackRate, setPlaybackRate] = useState(1);
-  const [captionData, setCaptionData] = useState<{ id: string; cues: Caption[]; error: boolean }>({ id: '', cues: [], error: false });
+  const [captionData, setCaptionData] = useState<{ id: string; cues: Caption[]; hash: string; error: boolean }>({ id: '', cues: [], hash: '', error: false });
+  const [illustrationData, setIllustrationData] = useState<{id:string;images:ReadingIllustration[];error:boolean}>({id:'',images:[],error:false});
   const [captionsVisible, setCaptionsVisible] = useState(true);
-  const [readerOpen, setReaderOpen] = useState(false);
+  const [readerOpen, setReaderOpen] = useState(readOnOpen);
+  const [keepScreenOn, setKeepScreenOn] = useState(true);
+  const screenWake = useScreenWake(readerOpen && audioOnly && Boolean(video.has_subtitles) && keepScreenOn);
+  const [readerMode, setReaderMode] = useState<ReaderMode>(readOnOpen ? 'read' : 'listen');
+  const [readingPosition, setReadingPosition] = useState(video.reading_position_seconds ?? 0);
   const [diagnosticText, setDiagnosticText] = useState('');
   const [diagnosticCopied, setDiagnosticCopied] = useState(false);
   const [diagnostics] = useState(() => {
     try { return createPlaybackDiagnostics(localStorage); } catch { return createPlaybackDiagnostics(); }
   });
-  const audioOnly = video.media_type === 'audio';
   const source = mediaPath(video);
   const collection = collectionQueue(videos, video);
   const next = collection[collection.findIndex((item) => item.id === video.id) + 1];
@@ -137,23 +158,46 @@ function WatchPage({ video, videos, chapters, onBack, onNext, onSelect, onProgre
     if (audioOnly) return claimAudioPlayback(navigator);
   }, [audioOnly]);
   useLayoutEffect(() => { refreshMediaControls(); }, [video.id, next?.id]);
+  useLayoutEffect(() => { restoredSource.current = null; }, [video.id]);
   useLayoutEffect(() => {
     // Preserve the same audio element and request playback before waiting for metadata.
     // This also keeps a tap/ended/lock-screen next action in the playback call chain.
-    if (audioOnly) play();
-  }, [video.id, audioOnly]);
+    readingSession.current = readOnOpen;
+    readingAnchor.current = video.reading_position_seconds ?? 0;
+    setReadingPosition(readingAnchor.current);
+    setReaderMode(readOnOpen ? 'read' : 'listen');
+    setReaderOpen((open) => readOnOpen || (open && audioOnly && Boolean(video.has_subtitles)));
+    if (readOnOpen) { playerRef.current?.pause(); setPaused(true); onActivity('read'); }
+    else if (audioOnly) {
+      if (openIntent === 'listen-reading' && video.reading_position_seconds != null) seekTo(video.reading_position_seconds);
+      play();
+    }
+  }, [video.id, audioOnly, openIntent]);
   useEffect(() => {
     const controller = new AbortController();
-    setCaptionData({ id: video.id, cues: [], error: false });
+    setCaptionData({ id: video.id, cues: [], hash: '', error: false });
     if (video.has_subtitles) void fetch(`/subtitles/${video.id}.vtt`, { credentials: 'same-origin', signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) throw new Error('Subtitle unavailable');
-        const cues = parseCaptions(await response.text());
+        const text = await response.text();
+        const cues = parseCaptions(text);
         if (!cues.length) throw new Error('Empty subtitles');
-        if (!controller.signal.aborted) setCaptionData({ id: video.id, cues, error: false });
-      }).catch(() => { if (!controller.signal.aborted) setCaptionData({ id: video.id, cues: [], error: true }); });
+        const digest = await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text));
+        const hash = [...new Uint8Array(digest)].map(b=>b.toString(16).padStart(2,'0')).join('');
+        if (!controller.signal.aborted) setCaptionData({ id: video.id, cues, hash, error: false });
+      }).catch(() => { if (!controller.signal.aborted) setCaptionData({ id: video.id, cues: [], hash:'', error: true }); });
     return () => controller.abort();
   }, [video.id, video.has_subtitles]);
+  useEffect(()=>{
+    if (!readerOpen || readerMode!=='read' || !captions.length || illustrationData.id===video.id) return;
+    const controller = new AbortController();
+    void api<unknown>(`/api/reading-content/${video.id}`,{signal:controller.signal}).then(value=>{
+      const images = matchingIllustrations(value,captionData.hash,captions.length);
+      if (!images) throw new Error('Illustration anchors do not match captions');
+      if (!controller.signal.aborted) setIllustrationData({id:video.id,images,error:false});
+    }).catch(()=>{if (!controller.signal.aborted) setIllustrationData({id:video.id,images:[],error:true});});
+    return ()=>controller.abort();
+  },[readerOpen,readerMode,video.id,captions,captionData.hash,illustrationData.id]);
   useEffect(() => {
     const persist = () => save(true);
     const visibility = () => {
@@ -189,20 +233,18 @@ function WatchPage({ video, videos, chapters, onBack, onNext, onSelect, onProgre
   }, [mirrorMode, paused, mirrorControlsVisible, controlsEpoch]);
   useEffect(() => {
     if (!mirrorMode) return;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
     const exitOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setMirrorMode(false);
     };
     document.addEventListener('keydown', exitOnEscape);
     return () => {
-      document.body.style.overflow = previousOverflow;
       document.removeEventListener('keydown', exitOnEscape);
     };
   }, [mirrorMode]);
   function save(force = false) {
     const player = playerRef.current;
-    if (!player || !Number.isFinite(player.currentTime) || player.currentTime < 0) return;
+    if (readingSession.current || !player || restoredSource.current !== source || player.readyState < 1 || player.seeking
+      || !Number.isFinite(player.currentTime) || player.currentTime < 0) return;
     if (new URL(player.currentSrc || player.src, location.href).pathname !== source) return;
     const now = Date.now();
     if (!force && now - lastSavedAt.current < 15_000) return;
@@ -211,22 +253,26 @@ function WatchPage({ video, videos, chapters, onBack, onNext, onSelect, onProgre
   }
   function loaded() {
     const player = playerRef.current;
-    if (!player) return;
+    if (!player || new URL(player.currentSrc || player.src, location.href).pathname !== source) return;
     player.playbackRate = playbackRate;
     setDuration(Number.isFinite(player.duration) ? player.duration : video.duration_seconds);
     const requestedTime = new URLSearchParams(location.search).get('t');
     if (requestedTime !== null && Number.isFinite(Number(requestedTime)) && Number(requestedTime) >= 0) {
       player.currentTime = Math.min(Number(requestedTime), Math.max(0, video.duration_seconds - 1));
-    } else if (video.position_seconds && video.position_seconds > 0 && !video.completed) {
-      player.currentTime = video.position_seconds;
-    }
+    } else player.currentTime = openingPosition(video, openIntent);
+    restoredSource.current = source;
     setCurrentTime(player.currentTime);
     updateMediaSession();
-    play();
+    if (readingSession.current) { player.pause(); setPaused(true); }
+    else play();
   }
   function play() {
     const player = playerRef.current;
     if (!player) return;
+    if (audioOnly) onActivity('listen');
+    if (readingSession.current) {
+      readingSession.current = false; setReaderMode('listen'); seekTo(readingAnchor.current);
+    }
     if (audioOnly) ensureAudioPlayback(navigator);
     trace('play:request');
     void player.play().then(() => trace('play:resolved')).catch((error: unknown) => {
@@ -272,7 +318,7 @@ function WatchPage({ video, videos, chapters, onBack, onNext, onSelect, onProgre
     const text = diagnostics.export(); setDiagnosticText(text); setDiagnosticCopied(false);
     try { await navigator.clipboard.writeText(text); setDiagnosticCopied(true); } catch { /* The visible text can be copied manually. */ }
   }
-  function advance() { if (audioOnly) flushSync(onNext); else onNext(); }
+  function advance(intent: OpenIntent = audioOnly ? 'listen' : 'default') { if (audioOnly) flushSync(() => onNext(intent)); else onNext(intent); }
   function ended() { trace('media:ended'); updateMediaSession(); onProgress(video.id, video.duration_seconds); if (autoNext && next) advance(); }
   function chapterJump(seconds: number) {
     if (playerRef.current) { playerRef.current.currentTime = seconds; void playerRef.current.play(); }
@@ -302,6 +348,18 @@ function WatchPage({ video, videos, chapters, onBack, onNext, onSelect, onProgre
     updateMediaSession();
     revealMirrorControls();
   }
+  function changeReaderMode(mode: ReaderMode, position: number) {
+    if (mode === 'read') {
+      onActivity('read');
+      save(true); readingSession.current = true; playerRef.current?.pause(); setPaused(true);
+      readingAnchor.current = position; setReadingPosition(position); setReaderMode('read');
+    } else {
+      readingSession.current = false; setReaderMode('listen'); seekTo(position); play();
+    }
+  }
+  function openReading() {
+    changeReaderMode('read', readingSession.current ? readingAnchor.current : currentTime); setReaderOpen(true);
+  }
   function changePlaybackRate(rate: number) {
     setPlaybackRate(rate);
     if (playerRef.current) playerRef.current.playbackRate = rate;
@@ -316,10 +374,10 @@ function WatchPage({ video, videos, chapters, onBack, onNext, onSelect, onProgre
           <strong>{video.title}</strong><span className="audio-art-hint">{paused ? '點一下播放' : '點一下暫停'}</span>
         </button>}
         {React.createElement(audioOnly ? 'audio' : 'video', {
-          ref: playerRef, controls: !mirrorMode, playsInline: true, preload: 'metadata', autoPlay: audioOnly,
+          ref: playerRef, controls: !mirrorMode, playsInline: true, preload: 'metadata', autoPlay: audioOnly && !readOnOpen,
           poster: audioOnly ? undefined : `/thumbnails/${video.id}.jpg`, src: source, onLoadedMetadata: loaded,
           onTimeUpdate: (event: React.SyntheticEvent<HTMLMediaElement>) => { setCurrentTime(event.currentTarget.currentTime); updateMediaSession(); save(); },
-          onPlay: () => { setPaused(false); setAutoplayBlocked(false); updateMediaSession(); trace('media:play'); },
+          onPlay: () => { if (audioOnly) onActivity('listen'); if (readingSession.current && !playerRef.current?.paused) { readingSession.current = false; setReaderMode('listen'); seekTo(readingAnchor.current); } setPaused(false); setAutoplayBlocked(false); updateMediaSession(); trace('media:play'); },
           onPlaying: () => { refreshMediaControls(); trace('media:playing'); },
           onPause: () => { setPaused(true); updateMediaSession(); trace('media:pause'); save(true); },
           onDurationChange: updateMediaSession,
@@ -338,7 +396,7 @@ function WatchPage({ video, videos, chapters, onBack, onNext, onSelect, onProgre
               <input className="mirror-seek" type="range" min="0" max={Math.max(1, duration)} step="1" value={Math.min(currentTime, duration)} onChange={(event) => seekTo(Number(event.target.value))} aria-label="播放進度" />
               <span className="mirror-time">{formatDuration(duration)}</span>
               <button type="button" onClick={() => seekTo(currentTime + 10)} aria-label="快轉 10 秒">+10</button>
-              {next && <button type="button" onClick={onNext} aria-label="下一集"><SkipForward size={21} /></button>}
+              {next && <button type="button" onClick={() => onNext()} aria-label="下一集"><SkipForward size={21} /></button>}
             </div>
           </div>
         </>}
@@ -346,12 +404,21 @@ function WatchPage({ video, videos, chapters, onBack, onNext, onSelect, onProgre
       {!mirrorMode && !audioOnly && <div className="player-actions"><button className="mirror-start" type="button" onClick={enterMirrorMode}><Tv size={18} /> 電視鏡像全畫面</button><span>鏡像輸出時按此播放；若要隱藏 Safari 工具列，請從分享選單加入主畫面，再由主畫面圖示開啟。</span></div>}
       {audioOnly && <div className="audio-actions"><button className="next-button" onClick={() => seekTo(currentTime - 15)}>倒退 15 秒</button><button className="next-button" onClick={() => seekTo(currentTime + 15)}>快轉 15 秒</button><label>播放速度 <select aria-label="播放速度" value={playbackRate} onChange={(event) => changePlaybackRate(Number(event.target.value))}>{[0.75,1,1.25,1.5,2].map((rate) => <option key={rate} value={rate}>{rate}×</option>)}</select></label></div>}
       {audioOnly && <details className="playback-help"><summary>耳機播放疑難排解</summary><p>若耳機恢復播放時跳到其他 App，請回到本頁點播放。也可用 Safari 開啟同一網站比較。iPhone 暫停後可能將播放控制交給其他 App。</p><button className="next-button" onClick={() => { refreshMediaControls(); play(); }}>恢復本頁播放</button><button className="next-button" onClick={() => void copyDiagnostics()}>{diagnosticCopied ? '已複製播放診斷' : '複製播放診斷'}</button><small>只記錄本機播放事件，不含帳密、媒體網址或內容；不會自動傳送。</small>{diagnosticText && <textarea aria-label="播放診斷紀錄" readOnly value={diagnosticText} />}</details>}
-      {video.has_subtitles ? <section className="reader-captions" aria-label="字幕與跟讀文字"><div className="reader-caption-actions"><button className="next-button" aria-pressed={captionsVisible} onClick={() => setCaptionsVisible(!captionsVisible)}>{captionsVisible ? '隱藏字幕' : '顯示字幕'}</button>{audioOnly && <button className="next-button" onClick={() => setReaderOpen(true)}><Maximize2 size={18} /> 全螢幕字幕</button>}</div><small>正體中文 · {video.topics.includes('字幕時間估算') ? '分段時間為估算' : '跟讀字幕'}</small>{captionsVisible && <p>{captionError ? '字幕暫時無法載入，不影響音訊播放。' : activeCaption?.text || (captions.length ? (currentTime === 0 && paused ? '播放時顯示跟讀文字' : '\u00a0') : '載入字幕中…')}</p>}</section> : audioOnly ? <section className="reader-captions" aria-label="字幕狀態"><small>本章尚無字幕，仍可正常收聽。</small></section> : null}
-      {readerOpen && audioOnly && Boolean(video.has_subtitles) && <CaptionReader chapterId={video.id} title={video.title} collection={video.collection}
+      {video.has_subtitles ? <section className="reader-captions" aria-label="字幕與跟讀文字"><div className="reader-caption-actions"><button className="next-button" aria-pressed={captionsVisible} onClick={() => setCaptionsVisible(!captionsVisible)}>{captionsVisible ? '隱藏字幕' : '顯示字幕'}</button>{audioOnly && <button className="next-button" onClick={() => { setReaderMode('listen'); setReaderOpen(true); }}><Maximize2 size={18} /> 全螢幕字幕</button>}{audioOnly && <button className="next-button" onClick={openReading}><BookOpen size={18} /> 閱讀章節</button>}</div><small>正體中文 · {video.topics.includes('字幕時間估算') ? '分段時間為估算' : '跟讀字幕'}</small>{captionsVisible && <p>{captionError ? '字幕暫時無法載入，不影響音訊播放。' : activeCaption?.text || (captions.length ? (currentTime === 0 && paused ? '播放時顯示跟讀文字' : '\u00a0') : '載入字幕中…')}</p>}</section> : audioOnly ? <section className="reader-captions" aria-label="字幕狀態"><small>本章尚無字幕，仍可正常收聽。</small></section> : null}
+      {readerOpen && audioOnly && Boolean(video.has_subtitles) && <CaptionReader key={video.id} chapterId={video.id} title={video.title} collection={video.collection}
+        screenWakeStatus={screenWake.status} onScreenWakeToggle={() => {
+          if (screenWake.status === 'active' || screenWake.status === 'requesting') setKeepScreenOn(false);
+          else if (!keepScreenOn) setKeepScreenOn(true);
+          else screenWake.retry();
+        }}
+        illustrations={illustrationData.id===video.id?illustrationData.images:EMPTY_ILLUSTRATIONS} illustrationError={illustrationData.id===video.id&&illustrationData.error}
         captions={captions} currentTime={currentTime} duration={duration} paused={paused} playbackRate={playbackRate}
+        mode={readerMode} readingPosition={readingPosition} onModeChange={changeReaderMode}
+        savedReadingPosition={video.reading_position_seconds}
+        onReadingProgress={(position) => { onActivity('read'); readingAnchor.current = position; return onReadingProgress(video.id, position); }}
         loadingError={captionError} playbackError={playbackError} onClose={() => setReaderOpen(false)} onTogglePlayback={togglePlayback}
-        onSeek={seekTo} onRateChange={changePlaybackRate} onNext={next ? advance : undefined} />}
-      <div className="watch-heading"><div><span className="eyebrow">{video.collection}{video.period ? ` · ${video.period}` : ''}</span><h1>{video.title}</h1></div>{next && <button className="next-button" onClick={onNext}>下一集 <SkipForward size={17} /></button>}</div>
+        onSeek={seekTo} onRateChange={changePlaybackRate} onNext={next ? () => advance(readerMode === 'read' ? 'read' : 'listen') : undefined} />}
+      <div className="watch-heading"><div><span className="eyebrow">{video.collection}{video.period ? ` · ${video.period}` : ''}</span><h1>{video.title}</h1></div>{next && <button className="next-button" onClick={() => onNext()}>下一集 <SkipForward size={17} /></button>}</div>
       <div className="watch-meta"><span><Clock3 size={15} /> {formatDuration(video.duration_seconds)}</span><span>{video.topics.slice(0, 3).join(' · ')}</span></div>
       {chapters.length > 0 && <section className="chapters"><h2>影片章節 <small>{chapters.length} 段</small></h2><div className="chapter-list">{chapters.map((chapter, index) => <button key={`${index}-${chapter.start_seconds}`} onClick={() => chapterJump(chapter.start_seconds)}><span>{String(index + 1).padStart(2, '0')}</span><strong>{chapter.title}</strong><small>{formatDuration(chapter.start_seconds)}</small></button>)}</div></section>}
     </div>
@@ -364,6 +431,7 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [videos, setVideos] = useState<Video[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [openIntent, setOpenIntent] = useState<OpenIntent>(routeIntent);
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [tab, setTab] = useState<Tab>('home');
   const [collection, setCollection] = useState('全部');
@@ -375,6 +443,7 @@ function App() {
   const sidebarVisible = narrowScreen ? sidebarOpen : !sidebarCollapsed;
   const [error, setError] = useState('');
   const progressRequests = useRef(new Map<string, Promise<void>>());
+  const readingRequests = useRef(new Map<string, Promise<void>>());
 
   useEffect(() => {
     const screen = matchMedia('(max-width: 680px)');
@@ -391,19 +460,23 @@ function App() {
     return () => document.removeEventListener('keydown', closeOnEscape);
   }, [narrowScreen, sidebarOpen]);
 
-  async function loadCatalog() {
+  async function loadCatalog(userId: number) {
     try {
       const data = await api<{ videos: Video[] }>('/api/catalog');
       setVideos(data.videos);
       const route = /^\/watch\/([a-zA-Z0-9_-]+)$/.exec(location.pathname);
-      if (route && data.videos.some((video) => video.id === route[1])) setSelectedId(route[1]);
+      const standalone = matchMedia('(display-mode: standalone)').matches || Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
+      const resume = startupResume(data.videos, route?.[1] || null, readResumePreference(userId), standalone,
+        routeIntent(), new URLSearchParams(location.search).has('t'));
+      setSelectedId(resume.id); setOpenIntent(resume.intent);
+      if (resume.id && resume.id !== route?.[1]) history.replaceState({}, '', `/watch/${resume.id}`);
       setError('');
     } catch (reason) { setError(reason instanceof Error ? reason.message : '載入片庫失敗'); }
   }
   useEffect(() => {
-    void api<Viewer>('/api/me').then(async (me) => { setViewer(me); await loadCatalog(); })
+    void api<Viewer>('/api/me').then(async (me) => { setViewer(me); await loadCatalog(me.id); })
       .catch(() => setViewer(null)).finally(() => setLoading(false));
-    const pop = () => setSelectedId(/^\/watch\/([a-zA-Z0-9_-]+)$/.exec(location.pathname)?.[1] || null);
+    const pop = () => { setOpenIntent(routeIntent()); setSelectedId(/^\/watch\/([a-zA-Z0-9_-]+)$/.exec(location.pathname)?.[1] || null); };
     addEventListener('popstate', pop);
     return () => removeEventListener('popstate', pop);
   }, []);
@@ -415,7 +488,7 @@ function App() {
   const selected = videos.find((video) => video.id === selectedId) || null;
   const collections = useMemo(() => ['全部', ...new Set(videos.map((video) => video.collection))], [videos]);
   const visible = useMemo(() => videos.filter((video) => {
-    if (tab === 'continue' && (!video.position_seconds || video.completed)) return false;
+    if (tab === 'continue' && (!video.position_seconds || video.completed) && video.reading_position_seconds == null) return false;
     if (collection !== '全部' && video.collection !== collection) return false;
     const text = `${video.title} ${video.collection} ${video.period || ''} ${video.topics.join(' ')}`.toLowerCase();
     return text.includes(query.trim().toLowerCase());
@@ -424,13 +497,15 @@ function App() {
     .sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0)).slice(0, 4);
   const audioResume = resumeAudio(videos.filter((video) => collection === '全部' || video.collection === collection));
 
-  function openVideo(video: Video) { dispatchEvent(new Event('family-screen-save')); setSelectedId(video.id); history.pushState({}, '', `/watch/${video.id}`); scrollTo(0, 0); }
+  const readingResume = resumeReading(videos.filter((video) => collection === '全部' || video.collection === collection));
+
+  function openVideo(video: Video, intent: OpenIntent = 'default') { dispatchEvent(new Event('family-screen-save')); setOpenIntent(intent); setSelectedId(video.id); history.pushState({}, '', `/watch/${video.id}`); scrollTo(0, 0); }
   function back() { dispatchEvent(new Event('family-screen-save')); setSelectedId(null); history.pushState({}, '', '/'); scrollTo(0, 0); }
-  function next() {
+  function next(intent: OpenIntent = 'default') {
     if (!selected) return;
     const group = collectionQueue(videos, selected);
     const nextVideo = group[group.findIndex((video) => video.id === selected.id) + 1];
-    if (nextVideo) openVideo(nextVideo);
+    if (nextVideo) openVideo(nextVideo, intent);
   }
   async function saveProgress(id: string, position: number) {
     setVideos((old) => old.map((video) => video.id === id ? { ...video, position_seconds: position, completed: Number(position >= video.duration_seconds - (video.media_type === 'audio' ? 0.25 : 5)), updated_at: Math.floor(Date.now() / 1000) } : video));
@@ -442,9 +517,19 @@ function App() {
     await request;
     if (progressRequests.current.get(id) === request) progressRequests.current.delete(id);
   }
+  async function saveReadingProgress(id: string, position: number) {
+    setVideos((old) => old.map((video) => video.id === id ? { ...video, reading_position_seconds: position, reading_updated_at: Date.now() } : video));
+    const request = (readingRequests.current.get(id) || Promise.resolve()).catch(() => undefined).then(async () => {
+      await api(`/api/reading-progress/${id}`, { method: 'PUT', keepalive: true,
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ position_seconds: position }) });
+    });
+    readingRequests.current.set(id, request);
+    try { await request; }
+    finally { if (readingRequests.current.get(id) === request) readingRequests.current.delete(id); }
+  }
   async function logout() {
     dispatchEvent(new Event('family-screen-save'));
-    await Promise.all(progressRequests.current.values());
+    await Promise.allSettled([...progressRequests.current.values(), ...readingRequests.current.values()]);
     await api('/api/logout', { method: 'POST' }).catch(() => undefined);
     setViewer(null); setVideos([]); back();
   }
@@ -453,17 +538,22 @@ function App() {
     if (selectedId) back();
   }
 
+  const preference = viewer ? readResumePreference(viewer.id) : null;
+  const readingFirst = preference?.mode === 'read' && preference.id === readingResume?.id;
+  const readingCard = (readingResume && !query && <div key="reading" className="audio-resume reading-resume"><BookOpen size={23} /><div><strong>接續上次閱讀</strong><p>{readingResume.collection} · {readingResume.title} · 閱讀位置 {formatDuration(readingResume.reading_position_seconds ?? 0)}</p></div><div className="reading-resume-actions"><button className="next-button" onClick={() => openVideo(readingResume, 'read')}>繼續閱讀 <BookOpen size={17} /></button><button className="next-button" onClick={() => openVideo(readingResume, 'listen-reading')}>從閱讀位置聽 <Play size={17} /></button></div></div>);
+  const listeningCard = (audioResume && !query && <div key="listening" className="audio-resume"><Headphones size={23} /><div><strong>接續上次收聽</strong><p>{audioResume.collection} · {audioResume.title} · 收聽位置 {formatDuration(audioResume.position_seconds ?? 0)}</p></div><button className="next-button" onClick={() => openVideo(audioResume, 'listen')}>繼續收聽 <Play size={17} /></button></div>);
+
   if (loading) return <div className="loading-screen"><span className="brand-mark"><Play size={20} fill="currentColor" /></span><span>正在打開家庭片庫…</span></div>;
-  if (!viewer) return <Login onLogin={(me) => { setViewer(me); void loadCatalog(); }} />;
+  if (!viewer) return <Login onLogin={(me) => { setViewer(me); void loadCatalog(me.id); }} />;
   return <div className={`app-shell${sidebarVisible ? '' : ' sidebar-collapsed'}`}>
     <header className="topbar"><div className="top-left"><button ref={menuRef} className="icon-button menu-button" type="button" aria-label={sidebarVisible ? '收合側欄' : '展開側欄'} aria-expanded={sidebarVisible} aria-controls="library-sidebar" onClick={() => narrowScreen ? setSidebarOpen(!sidebarOpen) : setSidebarCollapsed(!sidebarCollapsed)}><Menu size={23} /></button><button className="brand" onClick={() => navigate('home')}><span className="brand-mark"><Play size={16} fill="currentColor" /></span><span>family<span className="brand-accent">screen</span></span></button>{DEMO_MODE && <span className="demo-pill">SYNTHETIC DEMO</span>}</div><label className="search-box"><Search size={20} /><input value={query} onChange={(event) => { setQuery(event.target.value); if (selectedId) back(); }} placeholder="搜尋影音、主題或月份" aria-label="搜尋影音" />{query && <button aria-label="清除搜尋" onClick={() => setQuery('')}><X size={17} /></button>}</label><div className="account"><span className="account-avatar">{viewer.username.slice(0, 1).toUpperCase()}</span><span className="account-name">{viewer.username}</span>{!DEMO_MODE && <button className="icon-button" onClick={() => void logout()} title="登出" aria-label="登出"><LogOut size={19} /></button>}</div></header>
     <aside id="library-sidebar" className={`sidebar ${sidebarOpen ? 'sidebar-open' : ''}`} aria-label="片庫選單" hidden={!sidebarVisible}><div className="nav-group"><button className={tab === 'home' && !selected ? 'active' : ''} onClick={() => navigate('home')}><House size={20} />首頁</button><button className={tab === 'continue' && !selected ? 'active' : ''} onClick={() => navigate('continue')}><Clock3 size={20} />繼續觀看</button></div><div className="nav-divider" /><div className="nav-label">你的片庫</div><div className="nav-group"><button onClick={() => navigate('home', '全部')}><ListVideo size={20} />所有影音</button>{collections.slice(1).map((name) => <button key={name} className={collection === name && !selected ? 'active' : ''} onClick={() => navigate('collection', name)}><span className="nav-dot" />{name}</button>)}</div><div className="sidebar-bottom">{DEMO_MODE ? '本機示範：片單與影片皆為虛構。' : '由家人用心挑選的每一集。'}</div></aside>
     {narrowScreen && sidebarOpen && <button className="sidebar-backdrop" type="button" aria-label="關閉側欄" onClick={() => { setSidebarOpen(false); menuRef.current?.focus(); }} />}
-    <div className="content-area" inert={narrowScreen && sidebarOpen} aria-hidden={narrowScreen && sidebarOpen ? true : undefined}>{selected ? <WatchPage video={selected} videos={videos} chapters={chapters} onBack={back} onNext={next} onSelect={openVideo} onProgress={(id, position) => void saveProgress(id, position)} /> : <main className="library">
+    <div className="content-area" inert={narrowScreen && sidebarOpen} aria-hidden={narrowScreen && sidebarOpen ? true : undefined}>{selected ? <WatchPage video={selected} videos={videos} chapters={chapters} openIntent={openIntent} onReadingProgress={saveReadingProgress} onActivity={(mode) => rememberResume(viewer.id, selected.id, mode)} onBack={back} onNext={next} onSelect={openVideo} onProgress={(id, position) => void saveProgress(id, position)} /> : <main className="library">
       <HomeScreenGuide placement="library" />
-      {audioResume && !query && <div className="audio-resume"><Headphones size={23} /><div><strong>接續上次收聽</strong><p>{audioResume.collection} · {audioResume.title}</p></div><button className="next-button" onClick={() => openVideo(audioResume)}>繼續收聽 <Play size={17} /></button></div>}
+      {readingFirst ? <>{readingCard}{listeningCard}</> : <>{listeningCard}{readingCard}</>}
       {tab === 'home' && !query && resume.length > 0 && <section className="resume-section"><div className="section-head"><div><span className="eyebrow">PICK UP WHERE YOU LEFT OFF</span><h2>繼續觀看</h2></div><button className="text-link" onClick={() => navigate('continue')}>查看全部 <ChevronRight size={16} /></button></div><div className="video-grid resume-grid">{resume.map((video) => <VideoCard key={video.id} video={video} onSelect={() => openVideo(video)} />)}</div></section>}
-      <section className="catalog-section"><div className="section-head"><div><span className="eyebrow">YOUR FAMILY COLLECTION</span><h1>{query ? `搜尋「${query}」` : tab === 'continue' ? '繼續觀看' : collection === '全部' ? '為你挑選的影片' : collection}</h1><p>{query ? `${visible.length} 部符合的影片` : '想看哪一集，由你來選。'}</p></div><span className="count-pill">{visible.length} 部影音</span></div><div className="chips">{collections.map((name) => <button key={name} className={name === collection ? 'selected' : ''} onClick={() => { setCollection(name); if (tab === 'continue') setTab('home'); }}>{name}</button>)}</div>{error && <div className="load-error" role="alert">{error} <button onClick={() => void loadCatalog()}>重試</button></div>}{visible.length ? <div className="video-grid">{visible.map((video) => <VideoCard key={video.id} video={video} onSelect={() => openVideo(video)} />)}</div> : <div className="empty-state"><Film size={44} strokeWidth={1.4} /><h2>{videos.length ? '這裡還沒有符合的影片' : '片庫準備好了'}</h2><p>{videos.length ? '試著換個分類或搜尋字詞。' : '請家人使用匯入工具，加入挑選好的影片。'}</p></div>}</section>
+      <section className="catalog-section"><div className="section-head"><div><span className="eyebrow">YOUR FAMILY COLLECTION</span><h1>{query ? `搜尋「${query}」` : tab === 'continue' ? '繼續觀看' : collection === '全部' ? '為你挑選的影片' : collection}</h1><p>{query ? `${visible.length} 部符合的影片` : '想看哪一集，由你來選。'}</p></div><span className="count-pill">{visible.length} 部影音</span></div><div className="chips">{collections.map((name) => <button key={name} className={name === collection ? 'selected' : ''} onClick={() => { setCollection(name); if (tab === 'continue') setTab('home'); }}>{name}</button>)}</div>{error && <div className="load-error" role="alert">{error} <button onClick={() => void loadCatalog(viewer.id)}>重試</button></div>}{visible.length ? <div className="video-grid">{visible.map((video) => <VideoCard key={video.id} video={video} onSelect={() => openVideo(video)} />)}</div> : <div className="empty-state"><Film size={44} strokeWidth={1.4} /><h2>{videos.length ? '這裡還沒有符合的影片' : '片庫準備好了'}</h2><p>{videos.length ? '試著換個分類或搜尋字詞。' : '請家人使用匯入工具，加入挑選好的影片。'}</p></div>}</section>
     </main>}</div>
   </div>;
 }

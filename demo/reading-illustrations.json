@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "caption_sha256": "c87455f1543be6f154fcc60cd33a1a7749a7879c41866b085a85c62568e50699",
+  "images": [
+    {
+      "file": "769285b47b83df9f22f4364aed56dbabd3415ec33bc5209e5638a72f3d375277.jpg",
+      "before_cue": 2,
+      "width": 640,
+      "height": 360,
+      "alt": "原創示範：幾何形狀",
+      "decorative": false
+    }
+  ]
+}

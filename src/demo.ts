@@ -1,4 +1,5 @@
 // Local, synthetic data only. This module is loaded in Vite's demo mode, never by the Worker.
+import readingIllustrations from '../demo/reading-illustrations.json';
 type DemoVideo = {
   id: string; title: string; collection: string; kind: 'video' | 'audio'; period: null;
   duration_seconds: number; bytes: number; topics: string[]; sort_key: string;
@@ -23,6 +24,10 @@ const chapters: Record<string, { title: string; start_seconds: number }[]> = {
 
 type Progress = { position_seconds: number; updated_at: number };
 const storageKey = 'family-screen-synthetic-demo-progress';
+const readingKey = 'family-screen-synthetic-demo-reading';
+function readReading(): Record<string, Progress> {
+  try { return JSON.parse(localStorage.getItem(readingKey) || '{}') as Record<string, Progress>; } catch { return {}; }
+}
 
 function readProgress(): Record<string, Progress> {
   try {
@@ -38,7 +43,7 @@ export async function demoApi<T>(path: string, options?: RequestInit): Promise<T
     return { id: 1, username: 'demo' } as T;
   }
   if (path === '/api/catalog') {
-    const progress = readProgress();
+    const progress = readProgress(); const reading = readReading();
     return { videos: videos.map((video) => {
       const entry = progress[video.id];
       return {
@@ -46,10 +51,13 @@ export async function demoApi<T>(path: string, options?: RequestInit): Promise<T
         position_seconds: entry?.position_seconds ?? null,
         completed: entry ? Number(entry.position_seconds >= video.duration_seconds - (video.media_type === 'audio' ? 0.25 : 5)) : null,
         updated_at: entry?.updated_at ?? null,
+        reading_position_seconds: reading[video.id]?.position_seconds ?? null, reading_updated_at: reading[video.id]?.updated_at ?? null,
       };
     }) } as T;
   }
   const chapterId = /^\/api\/videos\/([a-z0-9-]+)\/chapters$/.exec(path)?.[1];
+  const illustratedId = /^\/api\/reading-content\/([a-z0-9-]+)$/.exec(path)?.[1];
+  if (illustratedId) return (illustratedId==='demo-audio-01'?readingIllustrations:{version:1,caption_sha256:null,images:[]}) as T;
   if (chapterId && videos.some((video) => video.id === chapterId)) return { chapters: chapters[chapterId] || [] } as T;
   const progressId = /^\/api\/progress\/([a-z0-9-]+)$/.exec(path)?.[1];
   if (progressId && method === 'PUT' && videos.some((video) => video.id === progressId)) {
@@ -58,6 +66,12 @@ export async function demoApi<T>(path: string, options?: RequestInit): Promise<T
     progress[progressId] = { position_seconds: body.position_seconds, updated_at: Math.floor(Date.now() / 1000) };
     localStorage.setItem(storageKey, JSON.stringify(progress));
     return { ok: true } as T;
+  }
+  const readingId = /^\/api\/reading-progress\/([a-z0-9-]+)$/.exec(path)?.[1];
+  if (readingId && method === 'PUT' && videos.some((video) => video.id === readingId && video.has_subtitles)) {
+    const body = JSON.parse(String(options?.body)) as { position_seconds: number };
+    const reading = readReading(); reading[readingId] = { position_seconds: body.position_seconds, updated_at: Date.now() };
+    localStorage.setItem(readingKey, JSON.stringify(reading)); return { ok: true } as T;
   }
   if (path === '/api/logout' && method === 'POST') return { ok: true } as T;
   throw new Error('Demo route not found');
