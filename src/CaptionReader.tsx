@@ -1,8 +1,9 @@
 import { Fragment, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { BookOpen, Headphones, Pause, Play, SkipForward, X } from 'lucide-react';
+import { BookOpen, Headphones, Pause, Play, SkipForward, Sun, X } from 'lucide-react';
 import { activeCaptionIndex, type Caption } from './playback';
 import { readingParagraphIndex, readingParagraphs, type ReaderMode } from './reading';
 import type { ReadingIllustration } from './illustrations';
+import type { ScreenWakeStatus } from './screen-wake';
 
 type Props = {
   chapterId: string; title: string; collection: string; captions: Caption[];
@@ -13,6 +14,8 @@ type Props = {
   onClose: () => void; onTogglePlayback: () => void; onSeek: (seconds: number) => void;
   onRateChange: (rate: number) => void; onNext?: () => void;
   illustrations: ReadingIllustration[]; illustrationError: boolean;
+  savedReadingPosition?: number | null;
+  screenWakeStatus: ScreenWakeStatus; onScreenWakeToggle: () => void;
 };
 
 const timeLabel = (seconds: number) => {
@@ -23,11 +26,35 @@ const timeLabel = (seconds: number) => {
   return hours ? `${hours}:${String(minutes).padStart(2, '0')}:${rest}` : `${minutes}:${rest}`;
 };
 
+function IllustrationViewer({ image, source, onClose }: { image: ReadingIllustration; source: string; onClose: () => void }) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const [failed, setFailed] = useState(false);
+  useLayoutEffect(() => {
+    const dialog = dialogRef.current;
+    const previousFocus = document.activeElement;
+    dialog?.showModal();
+    return () => {
+      dialog?.close();
+      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus({ preventScroll: true });
+    };
+  }, []);
+  return <dialog ref={dialogRef} className="reading-image-viewer" aria-label="書中圖片"
+    onCancel={(event) => { event.preventDefault(); event.stopPropagation(); onClose(); }}
+    onKeyDown={(event) => event.stopPropagation()}>
+    <header><span>書中圖片</span><button type="button" onClick={onClose} autoFocus aria-label="關閉圖片，返回閱讀"><X size={24} /><span>返回閱讀</span></button></header>
+    <div className="reading-image-stage" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      {failed ? <p role="status">圖片暫時無法載入。請按「返回閱讀」繼續讀書。</p>
+        : <img src={source} alt={image.alt} width={image.width} height={image.height} onError={() => setFailed(true)} />}
+    </div>
+  </dialog>;
+}
+
 /** Both views share the original audio element and the captions' acoustic anchors. */
 export function CaptionReader(props: Props) {
   const { chapterId, title, collection, captions, currentTime, duration, paused, playbackRate,
     mode, readingPosition, onModeChange, onReadingProgress,
-    loadingError, playbackError, onClose, onTogglePlayback, onSeek, onRateChange, onNext, illustrations, illustrationError } = props;
+    loadingError, playbackError, onClose, onTogglePlayback, onSeek, onRateChange, onNext, illustrations, illustrationError, savedReadingPosition,
+    screenWakeStatus, onScreenWakeToggle } = props;
   const dialogRef = useRef<HTMLDialogElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const currentRef = useRef<HTMLButtonElement>(null);
@@ -38,11 +65,13 @@ export function CaptionReader(props: Props) {
   const readingViewport = useRef({ width: 0, height: 0 });
   const anchor = useRef(readingPosition);
   const pendingSave = useRef<number | undefined>(undefined);
-  const lastSaved = useRef<number | undefined>(undefined);
+  // Merely restoring/reflowing an existing bookmark is not new reading activity.
+  const lastSaved = useRef<number | undefined>(savedReadingPosition ?? undefined);
   const requestVersion = useRef(0);
   const timer = useRef<number | undefined>(undefined);
   const [following, setFollowing] = useState(true);
-  const [fontSize, setFontSize] = useState(() => matchMedia('(max-width: 680px)').matches ? 24 : 28);
+  const [fontSize, setFontSize] = useState(() => matchMedia('(max-width: 680px)').matches ? 36 : 40);
+  const [expandedImage, setExpandedImage] = useState<ReadingIllustration | null>(null);
   const [paragraphIndex, setParagraphIndex] = useState(0);
   const [sync, setSync] = useState<'saved' | 'saving' | 'failed'>('saved');
   const paragraphs = useMemo(() => readingParagraphs(captions, illustrations.map(i=>i.before_cue)), [captions, illustrations]);
@@ -82,11 +111,11 @@ export function CaptionReader(props: Props) {
   function imagesBefore(cueIndex: number) {
     return illustrations.filter(image=>image.before_cue===cueIndex).map((image,i)=><figure key={`${image.file}-${i}`}
       className={`reading-illustration${image.decorative?' is-decoration':''}`} style={{maxWidth:image.decorative?64:image.width}}>
-      <a href={imageSource(image.file)} target="_blank" rel="noopener noreferrer" aria-label={image.alt || '放大書中圖片'} style={{aspectRatio:`${image.width} / ${image.height}`}}>
+      <button type="button" onClick={() => setExpandedImage(image)} aria-haspopup="dialog" aria-label={image.alt ? `放大圖片：${image.alt}` : '放大書中圖片'} style={{aspectRatio:`${image.width} / ${image.height}`}}>
         <img src={imageSource(image.file)} alt={image.alt} width={image.width} height={image.height}
           loading="lazy" decoding="async" onError={event=>{event.currentTarget.hidden=true;event.currentTarget.closest('figure')?.classList.add('image-unavailable');}} />
         <span className="reading-image-error">圖片暫時無法載入</span>
-      </a>
+      </button>
     </figure>);
   }
 
@@ -94,11 +123,9 @@ export function CaptionReader(props: Props) {
     const dialog = dialogRef.current;
     if (!dialog) return;
     const previousFocus = document.activeElement;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
     dialog.showModal();
     return () => {
-      dialog.close(); document.body.style.overflow = previousOverflow;
+      dialog.close();
       if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus({ preventScroll: true });
     };
   }, []);
@@ -183,6 +210,17 @@ export function CaptionReader(props: Props) {
     setParagraphIndex(chosen); remember(captions[chosenCue].start);
   }
   const percent = Math.round(paragraphIndex / Math.max(1, paragraphs.length) * 100);
+  const wakeActive = screenWakeStatus === 'active';
+  const wakeLabel = wakeActive ? '保持亮屏已啟用，點選後允許自動鎖屏'
+    : screenWakeStatus === 'unsupported' ? '此瀏覽器不支援保持亮屏'
+    : screenWakeStatus === 'requesting' ? '正在申請保持亮屏，點選可取消'
+    : screenWakeStatus === 'off' ? '啟用保持亮屏'
+    : '保持亮屏未啟用，點選重試';
+  const wakeButton = <button className="screen-wake-toggle" type="button" aria-pressed={wakeActive}
+    aria-label={wakeLabel} title={wakeLabel} disabled={screenWakeStatus === 'unsupported'} onClick={onScreenWakeToggle}>
+    <Sun size={18} /><span>{wakeActive ? '亮屏' : screenWakeStatus === 'requesting' ? '申請中'
+      : screenWakeStatus === 'off' ? '亮屏' : '未亮屏'}</span>
+  </button>;
   return <dialog ref={dialogRef} className={`caption-reader${mode === 'read' ? ' is-reading' : ''}`} aria-labelledby="caption-reader-title"
     onCancel={(event) => { event.preventDefault(); close(); }}
     onKeyDown={(event) => {
@@ -237,6 +275,7 @@ export function CaptionReader(props: Props) {
     {mode === 'read' ? <footer className="reading-footer" aria-label="閱讀進度，朗讀已暫停">
       <div><strong>本章 {percent}%</strong><span className="reading-sync" role="status">{sync === 'failed' ? <>未同步 <button type="button" onClick={flushReading}>重試</button></>
         : sync === 'saving' ? '保存中…' : '已保存'}</span></div>
+      {wakeButton}
       <button className="reading-listen-here" type="button" disabled={!paragraphs.length} onClick={listenHere}><Play size={20} fill="currentColor" /> 從這裡聽</button>
       {onNext && <button className="reading-next" type="button" onClick={() => { flushReading(); onNext(); }} aria-label="閱讀下一章"><SkipForward size={22} /></button>}
     </footer> : <footer className="caption-reader-player">
@@ -245,7 +284,7 @@ export function CaptionReader(props: Props) {
         <input type="range" min="0" max={Math.max(1, duration)} step="0.1" value={Math.min(currentTime, duration)}
           onChange={(event) => { setFollowing(true); onSeek(Number(event.target.value)); }}
           aria-label="字幕播放進度" aria-valuetext={`${timeLabel(currentTime)}，共 ${timeLabel(duration)}`} />
-        <span>{timeLabel(duration)}</span></div>
+        <span>{timeLabel(duration)}</span>{wakeButton}</div>
       <div className="caption-reader-controls">
         <button type="button" onClick={() => { setFollowing(true); onSeek(currentTime - 15); }} aria-label="倒退 15 秒">−15<span>秒</span></button>
         <button className="caption-reader-play" type="button" onClick={onTogglePlayback} aria-label={paused ? '播放音訊' : '暫停音訊'}>{paused ? <Play size={28} fill="currentColor" /> : <Pause size={28} fill="currentColor" />}</button>
@@ -256,5 +295,6 @@ export function CaptionReader(props: Props) {
         {onNext && <button type="button" onClick={onNext} aria-label="下一集"><SkipForward size={24} /></button>}
       </div>
     </footer>}
+    {expandedImage && <IllustrationViewer image={expandedImage} source={imageSource(expandedImage.file)} onClose={() => setExpandedImage(null)} />}
   </dialog>;
 }

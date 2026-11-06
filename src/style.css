@@ -1,4 +1,7 @@
 :root{--fs-bg:#111317;--fs-surface:#1b1e24;--fs-control:#272b32;--fs-control-hover:#3b4048;--fs-divider:#30333b;--fs-border:#454951;--fs-text:#eef0f2;--fs-text-muted:#bfc3ca;--fs-muted:#9299a4;--fs-accent:#f25541;--fs-accent-hover:#ff6b58;--fs-accent-soft:#f2554128;--fs-on-accent:#fff;--fs-error:#ff998d;font-family:'DM Sans','Noto Sans TC',system-ui,sans-serif;color:var(--fs-text);background:var(--fs-bg);font-synthesis:none;text-rendering:optimizeLegibility;-webkit-font-smoothing:antialiased}
+/* Tie the background lock to visible fullscreen surfaces, never to a saved inline value.
+   Closing, switching chapters or unmounting the last surface always releases it. */
+html:has(.caption-reader[open],.home-screen-dialog[open],.player-wrap.mirror-mode){overflow:hidden}
 *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;min-width:320px}button,input{font:inherit}button{cursor:pointer}button:focus-visible,input:focus-visible,video:focus-visible{outline:3px solid #ff907c;outline-offset:3px}button:disabled{opacity:.65;cursor:wait}h1,h2,h3,p{margin-top:0}button{color:inherit}.loading-screen{min-height:100vh;display:flex;align-items:center;justify-content:center;gap:15px;color:#bfc3ca}.brand{background:transparent;border:0;display:inline-flex;align-items:center;gap:10px;font-size:20px;font-weight:800;letter-spacing:-.07em;white-space:nowrap}.brand-mark{width:32px;height:26px;border-radius:8px;background:var(--fs-accent);color:white;display:inline-flex;align-items:center;justify-content:center;box-shadow:0 5px 20px #f2554144}.brand-mark svg{margin-left:2px}.brand-accent{color:#f25541}.eyebrow{font-size:11px;letter-spacing:.2em;color:#f08372;font-weight:800;text-transform:uppercase}.icon-button{display:inline-flex;align-items:center;justify-content:center;border:0;background:transparent;color:#b9bec6;width:36px;height:36px;border-radius:10px}.icon-button:hover,.icon-button:focus-visible{background:#282b32;color:white}
 
 .login-shell{min-height:100vh;display:grid;grid-template-columns:47% 53%;background:#13151a}.login-art{position:relative;overflow:hidden;background:radial-gradient(circle at 50% 35%,#e16d56 0%,#9d3e3b 27%,#3a242f 61%,#171a21 100%);display:flex;align-items:center;justify-content:center}.login-art:before,.login-art:after{content:'';position:absolute;border:1px solid #ffffff25;border-radius:50%;width:640px;height:640px;transform:rotate(25deg)}.login-art:after{width:460px;height:460px}.login-art-inner{z-index:1;display:flex;flex-direction:column;align-items:center;gap:28px;color:#fff9f5;text-align:center;font-size:25px;font-weight:700;letter-spacing:.08em}.login-art-inner svg{filter:drop-shadow(0 12px 20px #1b0d1544)}.login-panel{display:flex;flex-direction:column;justify-content:center;padding:70px clamp(34px,9vw,150px);max-width:950px}.brand-login{margin-bottom:90px}.login-copy h1{font-size:clamp(30px,3.2vw,48px);line-height:1.27;letter-spacing:-.04em;margin:20px 0}.login-copy p{font-size:15px;color:#9a9ea6;line-height:1.8;margin-bottom:32px}.login-form{display:flex;flex-direction:column;gap:20px;max-width:440px}.login-form label{display:flex;flex-direction:column;gap:9px;color:#d3d5d9;font-weight:600;font-size:14px}.login-form input{height:51px;background:#1e2128;border:1px solid #363a43;border-radius:11px;padding:0 15px;color:#fff;outline:none}.login-form input:focus{border-color:#ed7968;box-shadow:0 0 0 3px #f2554122}.form-error{color:var(--fs-error);font-size:13px;margin:0}.primary-button{height:52px;background:var(--fs-accent);color:white;border:0;border-radius:11px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:8px;margin-top:8px;transition:background .2s,transform .2s}.primary-button:hover{background:var(--fs-accent-hover);transform:translateY(-1px)}.login-footer{color:#747982;font-size:13px;margin:60px 0 0}
@@ -104,6 +107,9 @@
 .caption-reader-controls .caption-reader-play:hover { background:var(--fs-accent-hover); }
 .caption-reader-controls select { min-height:48px; max-width:84px; border:1px solid var(--fs-border); border-radius:10px; background:var(--fs-control); color:var(--fs-text); padding:8px; font-size:14px; }
 .caption-reader-error { margin:0 0 8px; text-align:center; font-size:13px; color:var(--fs-error); }
+.screen-wake-toggle{display:inline-flex;align-items:center;justify-content:center;flex:none;gap:5px;min-width:44px;min-height:44px;padding:4px 7px;border:1px solid var(--fs-border);border-radius:8px;background:var(--fs-control);color:var(--fs-text-muted);font-size:12px}
+.screen-wake-toggle[aria-pressed=true]{color:var(--fs-accent);border-color:var(--fs-accent);background:var(--fs-accent-soft)}
+.reading-footer .screen-wake-toggle span{display:inline;margin:0;white-space:nowrap;color:inherit;font-size:12px}
 @media(max-width:680px) {
   .caption-reader-header { padding-top:max(12px, env(safe-area-inset-top)); padding-bottom:12px; }
   .caption-reader-heading>span { font-size:11px; }
@@ -136,11 +142,22 @@
 .caption-reader.is-reading .caption-scroll{background:#e9e6de;color-scheme:light;scrollbar-color:#b3afa5 #e9e6de}
 .caption-reader.is-reading .reading-prose{color:#30312e}
 .reading-illustration{margin:1.4em auto;break-inside:avoid;width:100%}
-.reading-illustration a{display:block;width:100%;color:inherit}
+.reading-illustration>button{display:block;width:100%;color:inherit;border:0;padding:0;background:transparent;cursor:zoom-in}
 .reading-illustration img{display:block;width:100%;height:auto;max-width:100%;object-fit:contain}
 .reading-image-error{display:none;font-size:14px;color:#67645d}
 .image-unavailable .reading-image-error{display:grid;place-content:center;height:100%;background:#dedbd2}
 .reading-image-note{font-size:14px;color:#67645d}
+.reading-image-viewer{position:fixed;inset:0;width:100%;height:100dvh;max-width:none;max-height:none;margin:0;padding:0;border:0;background:var(--fs-bg);color:var(--fs-text);overflow:hidden}
+.reading-image-viewer[open]{display:flex;flex-direction:column}
+.reading-image-viewer::backdrop{background:#000c}
+.reading-image-viewer>header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex:none;padding:8px max(12px,env(safe-area-inset-right)) 8px max(16px,env(safe-area-inset-left));padding-top:calc(8px + env(safe-area-inset-top));font-size:14px;background:var(--fs-surface)}
+.reading-image-viewer>header button{display:flex;align-items:center;gap:8px;min-height:44px;padding:0 12px;border:1px solid var(--fs-border);border-radius:8px;background:var(--fs-control)}
+.reading-image-stage{display:flex;align-items:center;justify-content:center;flex:1;min-height:0;overflow:auto;padding:16px max(16px,env(safe-area-inset-right)) max(16px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}
+.reading-image-stage img{display:block;width:auto;height:auto;max-width:100%;max-height:100%;object-fit:contain}
+.reading-image-stage p{max-width:480px;line-height:1.8}
+/* Keep the episode list as a separate touch scroller within its bounded flex panel. */
+.queue-heading{flex:none}
+.queue-list{flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;touch-action:pan-y pinch-zoom}
 .reading-sync{flex:1;min-width:0;font-size:12px;color:var(--fs-muted)}
 .reading-sync button{min-height:44px;padding:0 10px;border:0;background:transparent;color:var(--fs-accent);text-decoration:underline}
 .reading-footer{display:flex;align-items:center;gap:16px;flex:none;border-top:1px solid var(--fs-divider);background:var(--fs-surface);padding:18px max(24px,env(safe-area-inset-right)) max(18px,env(safe-area-inset-bottom)) max(24px,env(safe-area-inset-left))}

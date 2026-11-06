@@ -20,26 +20,18 @@ export function HomeScreenGuide({ placement }: { placement: 'login' | 'library' 
     try { return localStorage.getItem(DISMISSED_KEY) === '1'; } catch { return false; }
   });
   const dialogRef = useRef<HTMLDialogElement>(null);
-  const previousOverflow = useRef<string | null>(null);
   const titleId = useId();
-
-  function restoreScroll() {
-    if (previousOverflow.current === null) return;
-    document.body.style.overflow = previousOverflow.current;
-    previousOverflow.current = null;
-  }
 
   useEffect(() => {
     const modes = [window.matchMedia('(display-mode: standalone)'), window.matchMedia('(display-mode: fullscreen)')];
     const update = () => {
       const next = displayContext();
-      if (next.standalone) { dialogRef.current?.close(); restoreScroll(); }
+      if (next.standalone) dialogRef.current?.close();
       setContext(next);
     };
     modes.forEach((mode) => mode.addEventListener('change', update));
     return () => {
       modes.forEach((mode) => mode.removeEventListener('change', update));
-      restoreScroll();
     };
   }, []);
 
@@ -47,8 +39,6 @@ export function HomeScreenGuide({ placement }: { placement: 'login' | 'library' 
     const dialog = dialogRef.current;
     if (!dialog || dialog.open) return;
     dialog.showModal();
-    previousOverflow.current = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
   }
 
   function dismissHint() {
@@ -65,7 +55,7 @@ export function HomeScreenGuide({ placement }: { placement: 'login' | 'library' 
       <button className="home-screen-dismiss" type="button" onClick={dismissHint} aria-label="收起加入主畫面提示"><X size={20} /></button>
     </section> : <button className="home-screen-link" type="button" onClick={openGuide} aria-haspopup="dialog"><Smartphone size={18} /> {context.ios ? '加入主畫面' : '在 iPhone 加入主畫面'}</button>}
 
-    <dialog className="home-screen-dialog" ref={dialogRef} aria-labelledby={titleId} onClose={restoreScroll}
+    <dialog className="home-screen-dialog" ref={dialogRef} aria-labelledby={titleId}
       onClick={(event) => { if (event.target === event.currentTarget) dialogRef.current?.close(); }}>
       <div className="home-screen-dialog-content">
         <div className="home-screen-dialog-heading"><div><span>只要設定一次</span><h2 id={titleId}>把家庭片庫放到主畫面</h2></div><button className="home-screen-dismiss" type="button" autoFocus onClick={() => dialogRef.current?.close()} aria-label="關閉加入主畫面引導"><X size={22} /></button></div>
