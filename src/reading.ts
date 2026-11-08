@@ -9,8 +9,9 @@ type ReadingResumeState = {
 
 /** A reading bookmark must not override an explicit request to continue listening. */
 export function startsInReading(item: ReadingResumeState, intent: OpenIntent, timeLink = false): boolean {
-  if (timeLink || item.media_type !== 'audio' || !item.has_subtitles || item.reading_position_seconds == null) return false;
+  if (timeLink || item.media_type !== 'audio' || !item.has_subtitles) return false;
   if (intent !== 'default') return intent === 'read';
+  if (item.reading_position_seconds == null) return false;
   return (item.reading_updated_at || 0) > (item.updated_at || 0) * 1000;
 }
 

@@ -9,6 +9,29 @@ async function moduleAt(name) {
 const { startsInReading, openingPosition } = await moduleAt('reading');
 const { readResumePreference, rememberResume, startupResume } = await moduleAt('resume-state');
 
+test('explicit reading opens unbookmarked chapters without changing listening defaults', () => {
+  const chapter = { media_type: 'audio', has_subtitles: 1, duration_seconds: 3600,
+    position_seconds: 2700, completed: 0, updated_at: 1000, reading_updated_at: 1_001_000 };
+  for (const reading_position_seconds of [null, undefined]) {
+    const unread = { ...chapter, reading_position_seconds };
+    assert.equal(startsInReading(unread, 'read'), true);
+    assert.equal(startsInReading(unread, 'default'), false);
+    assert.equal(startsInReading(unread, 'listen'), false);
+    assert.equal(startsInReading(unread, 'listen-reading'), false);
+    assert.equal(startsInReading(unread, 'read', true), false);
+    assert.equal(startsInReading({ ...unread, media_type: 'video' }, 'read'), false);
+    assert.equal(startsInReading({ ...unread, has_subtitles: 0 }, 'read'), false);
+    assert.equal(openingPosition(unread, 'listen'), 2700);
+    assert.equal(openingPosition(unread, 'listen-reading'), 2700);
+  }
+  const bookmarked = { ...chapter, reading_position_seconds: 0 };
+  assert.equal(startsInReading(bookmarked, 'default'), true);
+  assert.equal(startsInReading(bookmarked, 'read'), true);
+  assert.equal(startsInReading(bookmarked, 'listen'), false);
+  assert.equal(startsInReading(bookmarked, 'listen-reading'), false);
+  assert.equal(openingPosition(bookmarked, 'listen-reading'), 0);
+});
+
 test('continue listening and reading-to-speech restore different positions', () => {
   const chapter = { media_type: 'audio', has_subtitles: 1, duration_seconds: 3600,
     position_seconds: 2700, completed: 0, updated_at: 1000,
